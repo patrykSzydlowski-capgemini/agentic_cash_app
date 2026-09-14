@@ -1,19 +1,34 @@
 import cds from '@sap/cds';
 
 export default async function () {
-    const { OpenItem, MatchResult } = this.entities;
+    const { MatchResult } = this.entities;
+    const { 'poc.cash.MatchResult': DbMatchResult } = cds.entities('poc.cash');
 
-    // Obsługa pobierania OpenItem z lokalnej bazy danych SQLite
+    const remoteService = await cds.connect.to('ZAC_OPENITEMS_MOC_O4');
+
+    // Przekierowanie zapytania READ do encji SAP
     this.on('READ', 'OpenItem', async (req) => {
-        return await SELECT.from(OpenItem).where(req.query.SELECT.where || {});
+        try {
+            const query = SELECT.from('zac_openitems_moc');
+            
+            if (req.query.SELECT?.where) {
+                query.where(req.query.SELECT.where);
+            }
+            if (req.query.SELECT?.limit) {
+                query.limit(req.query.SELECT.limit.rows, req.query.SELECT.limit.offset);
+            }
+
+            return await remoteService.run(query);
+        } catch (error) {
+            console.error('Błąd remote OData, fallback na SQLite:', error.message);
+            return await SELECT.from('poc.cash.OpenItem');
+        }
     });
 
-    // Obsługa kliknięcia przycisku "Agenta AI" z poziomu UI Fiori
     this.on('triggerAIAgent', 'MatchResult', async (req) => {
-        const [matchId] = req.params; // Pobranie ID zaznaczonego wiersza
+        const matchId = req.params[0]?.match_id || req.params[0];
 
-
-        await UPDATE(MatchResult)
+        await UPDATE(DbMatchResult)
             .set({ 
                 match_status: 'MATCHED', 
                 action_required: false,
@@ -21,15 +36,14 @@ export default async function () {
             })
             .where({ match_id: matchId });
 
-
         req.notify(`Agent AI pomyślnie przetworzył rekord ${matchId}`);
     });
+    
 
-    // Ingestowanie dopasowań wygenerowanych przez agenta AI (API)
     this.on('ingestAgentMatch', async (req) => {
         const { match_id, open_item_id, matched_amount, confidence } = req.data;
         
-        await INSERT.into(MatchResult).entries({
+        await INSERT.into(DbMatchResult).entries({
             match_id: match_id,
             open_item_OpenItemId: open_item_id,
             matched_amount: matched_amount,

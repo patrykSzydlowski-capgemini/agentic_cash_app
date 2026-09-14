@@ -1,7 +1,10 @@
 using { poc.cash as my } from '../db/schema';
+using { ZAC_OPENITEMS_MOC_O4 as external } from './external/ZAC_OPENITEMS_MOC_O4';
 
 service CashSyncService {
-    entity OpenItem as projection on my.OpenItem;
+
+    @cds.mapped.from: 'zac_openitems_moc'
+    entity OpenItem as projection on external.zac_openitems_moc;
 
     entity MatchResult as projection on my.MatchResult {
         *,
@@ -13,13 +16,12 @@ service CashSyncService {
             else 0
         end as CriticalityCode : Integer
     } actions {
-        // Akcja wykonywana dla zaznaczonego w tabeli wiersza
         action triggerAIAgent() returns String;
     };
 
     entity RemittanceItem as projection on my.RemittanceItem;
-    entity AgentRun as projection on my.AgentRun;
-    entity ManualTask as projection on my.ManualTask;
+    entity AgentRun       as projection on my.AgentRun;
+    entity ManualTask     as projection on my.ManualTask;
 
     action ingestAgentMatch(
         match_id: String,
@@ -31,3 +33,13 @@ service CashSyncService {
         confidence: Decimal(5,2)
     ) returns String;
 }
+
+// Osobny bloki adnotacji, aby nie zaburzać struktury CDS
+annotate CashSyncService.OpenItem with @(
+    UI.LineItem : [
+        { Value: OpenItemId,      Label: 'ID Pozycji' },
+        { Value: CustomerAccount, Label: 'Konto Klienta' },
+        { Value: CustomerName,    Label: 'Nazwa Klienta' },
+        { Value: InvoiceAmount,   Label: 'Kwota' }
+    ]
+);

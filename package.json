@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@cap-js/sqlite": "^1.7.0",
     "@sap/cds": "^8",
     "express": "^4"
   },
@@ -15,5 +16,16 @@
   "scripts": {
     "start": "cds-serve",
     "watch": "cds watch"
+  },
+  "cds": {
+    "requires": {
+      "ZAC_OPENITEMS_MOC_O4": {
+        "kind": "odata-v4",
+        "credentials": {
+          "destination": "HD0_BAS",
+          "path": "/sap/opu/odata4/sap/zac_openitems_moc_o4/srvd_a2x/sap/zac_openitems_moc/0001"
+        }
+      }
+    }
   }
 }
