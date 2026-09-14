@@ -1,0 +1,4 @@
+OpenItemId,CustomerName,CustomerAccount,InvoiceAmount,ClearingStatus
+OP-1001,ACME Corp,CUST-01,1500.00,OPEN
+OP-1002,Global Logistics,CUST-02,2450.50,OPEN
+OP-1003,TechSupplies,CUST-03,890.00,OPEN

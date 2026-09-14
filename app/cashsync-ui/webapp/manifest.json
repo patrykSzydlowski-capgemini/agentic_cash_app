@@ -1,0 +1,131 @@
+{
+  "_version": "1.89.0",
+  "sap.app": {
+    "id": "poc.cash.cashsyncui",
+    "type": "application",
+    "i18n": "i18n/i18n.properties",
+    "applicationVersion": {
+      "version": "0.0.1"
+    },
+    "title": "Dopasowania Płatności AI",
+    "description": "Aplikacja do automatycznego dopasowywania płatności",
+    "dataSources": {
+      "mainService": {
+        "uri": "/odata/v4/cash-sync/",
+        "type": "OData",
+        "settings": {
+          "annotations": [],
+          "odataVersion": "4.0"
+        }
+      }
+    }
+  },
+  "sap.ui": {
+    "technology": "UI5",
+    "deviceTypes": {
+      "desktop": true,
+      "tablet": true,
+      "phone": true
+    }
+  },
+  "sap.ui5": {
+    "rootView": {
+      "viewName": "sap.fe.templates.RootContainer.view.Fcl",
+      "type": "XML",
+      "async": true,
+      "id": "appRootView"
+    },
+    "dependencies": {
+      "minUI5Version": "1.108.0",
+      "libs": {
+        "sap.m": {},
+        "sap.ui.core": {},
+        "sap.fe.templates": {},
+        "sap.f": {}
+      }
+    },
+    "contentDensities": {
+      "compact": true,
+      "cozy": true
+    },
+    "models": {
+      "i18n": {
+        "type": "sap.ui.model.resource.ResourceModel",
+        "settings": {
+          "bundleName": "poc.cash.cashsyncui.i18n.i18n"
+        }
+      },
+      "": {
+        "dataSource": "mainService",
+        "preload": true,
+        "settings": {
+          "operationMode": "Server",
+          "autoExpandSelect": true,
+          "earlyRequests": true
+        }
+      }
+    },
+    "routing": {
+      "config": {
+        "fullWidth": true,
+        "routerClass": "sap.f.routing.Router"
+      },
+      "routes": [
+        {
+          "pattern": ":?query:",
+          "name": "MatchResultList",
+          "target": "MatchResultList"
+        },
+        {
+          "pattern": "MatchResult({key}):?query:",
+          "name": "MatchResultObjectPage",
+          "target": [
+            "MatchResultList",
+            "MatchResultObjectPage"
+          ]
+        }
+      ],
+      "targets": {
+        "MatchResultList": {
+          "type": "Component",
+          "id": "MatchResultList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "contextPath": "/MatchResult",
+              "variantManagement": "Page",
+              "initialLoad": "Enabled",
+              "navigation": {
+                "MatchResult": {
+                  "detail": {
+                    "route": "MatchResultObjectPage"
+                  }
+                }
+              },
+              "controlConfiguration": {
+                "@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable"
+                  }
+                }
+              }
+            }
+          },
+          "controlAggregation": "beginColumnPages"
+        },
+        "MatchResultObjectPage": {
+          "type": "Component",
+          "id": "MatchResultObjectPage",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "editableHeaderContent": false,
+              "contextPath": "/MatchResult"
+            }
+          },
+          "controlAggregation": "midColumnPages"
+        }
+      }
+    }
+  }
+}

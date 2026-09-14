@@ -1,0 +1,4 @@
+match_id,matched_amount,variance_amount,match_status,source_label,action_required,review_status,open_item_OpenItemId
+MATCH-001,1500.00,0.00,MATCHED,EMAIL_REMITTANCE,false,APPROVED,OP-1001
+MATCH-002,2450.50,50.00,NEEDS_REVIEW,BANK_STATEMENT,true,PENDING,OP-1002
+MATCH-003,890.00,0.00,MATCHED,PDF_INVOICE,false,APPROVED,OP-1003

@@ -1,0 +1,19 @@
+{
+  "name": "poc_cash",
+  "version": "1.0.0",
+  "description": "AI Agent Cash Matching Dashboard",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sap/cds": "^8",
+    "express": "^4"
+  },
+  "devDependencies": {
+    "@cap-js/cds-types": "^0.6.0",
+    "@sap/cds-dk": "^8"
+  },
+  "scripts": {
+    "start": "cds-serve",
+    "watch": "cds watch"
+  }
+}
