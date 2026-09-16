@@ -6,6 +6,7 @@ service CashSyncService {
     @cds.mapped.from: 'zac_openitems_moc'
     entity OpenItem as projection on external.zac_openitems_moc;
 
+    @cds.odata.expand: [ 'open_item' ]
     entity MatchResult as projection on my.MatchResult {
         *,
         open_item,
@@ -23,23 +24,14 @@ service CashSyncService {
     entity AgentRun       as projection on my.AgentRun;
     entity ManualTask     as projection on my.ManualTask;
 
+    // Akcja wywołująca Gemini 1.5 Flash do analizy pozycji
+    action analyzeWithGemini() returns String;
+
     action ingestAgentMatch(
         match_id: String,
         open_item_id: String,
-        bank_line_id: String,
-        remittance_item_id: String,
-        run_id: String,
         matched_amount: Decimal(15,2),
-        confidence: Decimal(5,2)
+        confidence: Decimal(5,2),
+        review_reason: String
     ) returns String;
 }
-
-// Osobny bloki adnotacji, aby nie zaburzać struktury CDS
-annotate CashSyncService.OpenItem with @(
-    UI.LineItem : [
-        { Value: OpenItemId,      Label: 'ID Pozycji' },
-        { Value: CustomerAccount, Label: 'Konto Klienta' },
-        { Value: CustomerName,    Label: 'Nazwa Klienta' },
-        { Value: InvoiceAmount,   Label: 'Kwota' }
-    ]
-);
