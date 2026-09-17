@@ -1,0 +1,30 @@
+{
+  "xsappname": "poc-cash",
+  "tenant-mode": "dedicated",
+  "description": "AI Agent Cash Matching Dashboard",
+  "scopes": [
+    {
+      "name": "Viewer",
+      "description": "Read cash matching results"
+    },
+    {
+      "name": "Processor",
+      "description": "Trigger AI agent and process matches"
+    }
+  ],
+  "role-templates": [
+    {
+      "name": "CashViewer",
+      "description": "Can view MatchResult and OpenItem",
+      "scope-references": ["$XSAPPNAME.Viewer"]
+    },
+    {
+      "name": "CashProcessor",
+      "description": "Can trigger AI agent and ingest matches",
+      "scope-references": ["$XSAPPNAME.Viewer", "$XSAPPNAME.Processor"]
+    }
+  ],
+  "oauth2-configuration": {
+    "token-validity": 3600
+  }
+}

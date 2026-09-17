@@ -12,9 +12,10 @@
 // generated directly from the deterministic reasoning — no LLM round trip
 // needed to explain an exact-amount, exact-reference match.
 
-import { generateText } from '../genai/orchestration-client';
-import type { ExtractedPayment } from './extraction-agent';
-import type { OpenItem } from '../s4/open-items-client';
+// import { generateText } from '../genai/orchestration-client';
+// import type { OpenItem } from '../s4/open-items-client';
+import { generateText, type OpenItem } from './integration-mocks.js';
+import type { ExtractedPayment } from './extraction-agent.js';
 
 export interface ProposedMatchCandidate {
   openItemId: string;

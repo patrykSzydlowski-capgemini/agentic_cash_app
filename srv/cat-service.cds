@@ -1,10 +1,10 @@
 using { poc.cash as my } from '../db/schema';
-using { ZAC_OPENITEMS_MOC_O4 as external } from './external/ZAC_OPENITEMS_MOC_O4';
+// Remote SAP mock (srv/external/ZAC_OPENITEMS_MOC_O4) kept for reference only.
+// Local-first: SQLite poc.cash.OpenItem is the source of truth.
 
 service CashSyncService {
 
-    @cds.mapped.from: 'zac_openitems_moc'
-    entity OpenItem as projection on external.zac_openitems_moc;
+    entity OpenItem as projection on my.OpenItem;
 
     @cds.odata.expand: [ 'open_item' ]
     entity MatchResult as projection on my.MatchResult {

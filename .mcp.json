@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "cds-mcp": { "command": "npx", "args": ["-y", "@cap-js/mcp-server"] },
+    "fiori-mcp": {
+      "type": "stdio",
+      "timeout": 600,
+      "command": "npx",
+      "args": ["--yes", "@sap-ux/fiori-mcp-server@latest", "fiori-mcp"]
+    },
+    "ui5-mcp-server": { "command": "npx", "args": ["-y", "@ui5/mcp-server"] },
+    "hana-cli": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "-p", "hana-cli", "hana-cli-mcp"]
+    },
+    "sap-tutorials": { "type": "http", "url": "https://developers.sap.com/mcp/search" }
+  }
+}

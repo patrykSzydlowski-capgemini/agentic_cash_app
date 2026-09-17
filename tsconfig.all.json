@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["srv/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "gen", "app", "@cds-models"]
+}

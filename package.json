@@ -8,23 +8,35 @@
     "@cap-js/sqlite": "^3.1.0",
     "@sap/cds": "^10.1.0",
     "axios": "^1.20.0",
-    "express": "^4"
+    "express": "^4",
+    "npx": "^10.2.2"
   },
   "devDependencies": {
-    "@sap/cds-dk": "^8"
+    "@cap-js/cds-typer": "^0.41.1",
+    "@cap-js/cds-types": "^0.19.0",
+    "@sap/cds-dk": "^10.1.1",
+    "@types/node": "^24.13.5",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3"
   },
   "scripts": {
     "start": "cds-serve",
-    "watch": "cds watch"
+    "watch": "cds watch",
+    "dev": "cds watch --in-memory",
+    "pretypecheck": "npm run cds:types",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:all": "tsc -p tsconfig.all.json --noEmit",
+    "cds:types": "cds-typer \"*\" --outputDirectory @cds-models",
+    "test": "node --import tsx --test test/*.test.ts",
+    "pretypecheck:all": "npm run cds:types",
+    "pretest:built": "npm run build:server",
+    "test:built": "node --import tsx --test test/*.test.ts",
+    "build:server": "cds build --production"
   },
   "cds": {
     "requires": {
-      "ZAC_OPENITEMS_MOC_O4": {
-        "kind": "odata-v4",
-        "credentials": {
-          "destination": "HD0_BAS",
-          "path": "/sap/opu/odata4/sap/zac_openitems_moc_o4/srvd_a2x/sap/zac_openitems_moc/0001"
-        }
+      "db": {
+        "kind": "sqlite"
       }
     }
   }
