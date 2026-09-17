@@ -76,6 +76,25 @@ from the built `gen/srv` package.
 CSVs, and runs the compiled service with plain Node.js. Both test modes use
 disposable in-memory databases and stop their server after the tests.
 
+## Enabling real AI
+
+The pipeline runs on explicit local mocks by default. To use real AI through
+SAP AI Core / Generative AI Hub (orchestration, via `@sap-ai-sdk/orchestration`):
+
+1. Create an AI Core service instance/key in BTP (or use an existing one) and
+   copy `.env.example` to `.env` (git-ignored). Fill `AICORE_SERVICE_KEY` with
+   the full service-key JSON and set `CASH_AI_ENABLED=true`.
+2. Restart the server (`npm run dev`). The SDK picks the credentials up
+   automatically; model/resource-group defaults can be overridden with
+   `AICORE_MODEL` / `AICORE_RESOURCE_GROUP`.
+3. Call `processPaymentDocument` with a real PDF (base64) — extraction and the
+   fuzzy payer-resolution step now go through Generative AI Hub. Mock mode
+   remains the default whenever `CASH_AI_ENABLED` is unset/false.
+
+On Cloud Foundry, bind the AI Core instance to the app instead of using `.env`;
+the SDK resolves the binding itself. Never commit `.env`, service keys or
+tokens.
+
 ## Known boundaries
 
 - Live AI and S/4 calls stay disabled by default (`CASH_AI_ENABLED` /

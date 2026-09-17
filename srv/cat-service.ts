@@ -52,18 +52,22 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         })
 
         // Local-first pipeline: extraction -> matching -> persistence.
-        // PDF bytes are not processed unless a real provider is wired in via
-        // CASH_AI_ENABLED; the OpenItems source is local SQLite by default.
+        // Real AI (SAP AI Core orchestration) is used when CASH_AI_ENABLED=true
+        // with valid AICORE_SERVICE_KEY credentials; otherwise the explicit
+        // local mock keeps the pipeline runnable offline.
         this.on('processPaymentDocument', async (req: Request) => {
             const { pdfBase64 } = req.data as ProcessPaymentDocumentPayload
             if (!pdfBase64) req.error({ code: '400', message: 'pdfBase64 is required' })
             const pdfBytes = Buffer.from(pdfBase64 ?? '', 'base64')
 
-            const extract = await import('./agents/integration-mocks.js')
-                .then(m => m.extractDocument)
-                .catch(() => {
-                    throw new Error('No extraction provider available.')
-                })
+            const live = process.env.CASH_AI_ENABLED === 'true'
+            const extract: (pdf: Buffer, prompt: string) => Promise<string> = live
+                ? (await import('./genai/orchestration-client.js')).extractDocument
+                : (await import('./agents/integration-mocks.js')).extractDocument
+            const complete: (prompt: string) => Promise<string> = live
+                ? (await import('./genai/orchestration-client.js')).generateText
+                : (await import('./agents/integration-mocks.js')).generateText
+
             const payment = await extractPayment(pdfBytes, extract)
 
             const { OpenItem: DbOpenItem } = cds.entities('poc.cash')
@@ -78,7 +82,6 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 clearingStatus: String(row.ClearingStatus),
             }))
 
-            const complete = (await import('./agents/integration-mocks.js')).generateText
             const candidates = await proposeMatches(payment, openItems, complete)
 
             const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
