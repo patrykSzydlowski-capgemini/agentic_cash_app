@@ -2,8 +2,7 @@
 // PDF and returns structured payment data. Does not look at open items or
 // make matching decisions (that's Agent 3, srv/agents/matching-agent.ts).
 
-// import { extractDocument } from '../genai/orchestration-client';
-import { extractDocument } from './integration-mocks.js';
+import { extractDocument } from '../genai/orchestration-client.js';
 
 export interface ExtractedPayment {
   payer: string;
@@ -125,8 +124,11 @@ function validate(parsed: unknown): ExtractedPayment {
   };
 }
 
-export async function extractPayment(pdfBuffer: Buffer): Promise<ExtractedPayment> {
-  const raw = await extractDocument(pdfBuffer, EXTRACTION_PROMPT);
+export async function extractPayment(
+  pdfBuffer: Buffer,
+  extract: (pdfBuffer: Buffer, prompt: string) => Promise<string> = extractDocument,
+): Promise<ExtractedPayment> {
+  const raw = await extract(pdfBuffer, EXTRACTION_PROMPT);
 
   let parsed: unknown;
   try {

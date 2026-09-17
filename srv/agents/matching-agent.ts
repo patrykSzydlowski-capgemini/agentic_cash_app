@@ -12,9 +12,8 @@
 // generated directly from the deterministic reasoning — no LLM round trip
 // needed to explain an exact-amount, exact-reference match.
 
-// import { generateText } from '../genai/orchestration-client';
-// import type { OpenItem } from '../s4/open-items-client';
-import { generateText, type OpenItem } from './integration-mocks.js';
+import { generateText } from '../genai/orchestration-client.js';
+import type { OpenItem } from '../s4/open-items-client.js';
 import type { ExtractedPayment } from './extraction-agent.js';
 
 export interface ProposedMatchCandidate {
@@ -30,8 +29,10 @@ function amountsEqual(a: number, b: number): boolean {
 }
 
 function referencesContainId(references: string[], openItemId: string): boolean {
-  const needle = openItemId.toLowerCase();
-  return references.some((ref) => ref.toLowerCase().includes(needle));
+  if (!openItemId.trim()) return false;
+  const needle = openItemId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const token = new RegExp(`(^|[^a-z0-9_-])${needle}($|[^a-z0-9_-])`, 'i');
+  return references.some((ref) => token.test(ref));
 }
 
 function noMatchCandidate(rationale: string): ProposedMatchCandidate {
@@ -188,13 +189,13 @@ function parsePayerResolution(raw: string, validAccounts: Set<string>): PayerRes
   return { matchedCustomerAccounts: candidate.matchedCustomerAccounts, rationale: candidate.rationale };
 }
 
-async function resolveByPayerFuzzyMatch(payment: ExtractedPayment, items: OpenItem[]): Promise<ProposedMatchCandidate[]> {
+async function resolveByPayerFuzzyMatch(payment: ExtractedPayment, items: OpenItem[], complete: typeof generateText): Promise<ProposedMatchCandidate[]> {
   if (items.length === 0) {
     return [noMatchCandidate('No open items are available to match against.')];
   }
 
   const candidates = uniqueCustomers(items);
-  const raw = await generateText(buildPayerResolutionPrompt(payment.payer, candidates));
+  const raw = await complete(buildPayerResolutionPrompt(payment.payer, candidates));
   const resolved = parsePayerResolution(raw, new Set(candidates.map((c) => c.customerAccount)));
 
   if (resolved.matchedCustomerAccounts.length === 0) {
@@ -227,7 +228,11 @@ async function resolveByPayerFuzzyMatch(payment: ExtractedPayment, items: OpenIt
   }));
 }
 
-export async function proposeMatches(payment: ExtractedPayment, openItems: OpenItem[]): Promise<ProposedMatchCandidate[]> {
+export async function proposeMatches(
+  payment: ExtractedPayment,
+  openItems: OpenItem[],
+  complete: typeof generateText = generateText,
+): Promise<ProposedMatchCandidate[]> {
   // Open items already being handled elsewhere are excluded entirely, not
   // just deprioritized — see CLAUDE.md's note on ClearingStatus vs matchStatus.
   const eligibleItems = openItems.filter((item) => item.clearingStatus !== 'IN PROCESS');
@@ -242,5 +247,5 @@ export async function proposeMatches(payment: ExtractedPayment, openItems: OpenI
     return [scoreSingleReferencedItem(payment, referencedItems[0])];
   }
 
-  return resolveByPayerFuzzyMatch(payment, eligibleItems);
+  return resolveByPayerFuzzyMatch(payment, eligibleItems, complete);
 }

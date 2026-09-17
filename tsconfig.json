@@ -12,6 +12,6 @@
     "types": ["node", "@cap-js/cds-types"],
     "rootDir": "."
   },
-  "include": ["srv/**/*.ts", "test/**/*.ts"],
-  "exclude": ["srv/agents", "node_modules", "gen", "app", "@cds-models"]
+  "include": ["srv/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["node_modules", "gen", "app", "@cds-models"]
 }

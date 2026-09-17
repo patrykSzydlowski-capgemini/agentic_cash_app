@@ -17,17 +17,7 @@ modules:
       memory: 512M
       disk-quota: 512M
     requires:
-      - name: poc-cash-db
       - name: poc-cash-uaa
-
-  - name: poc-cash-db-deployer
-    type: hdb
-    path: gen/db
-    parameters:
-      memory: 256M
-      disk-quota: 256M
-    requires:
-      - name: poc-cash-db
 
   - name: poc-cash-app
     type: html5
@@ -56,12 +46,6 @@ modules:
           strictSSL: true
 
 resources:
-  - name: poc-cash-db
-    type: com.sap.xs.hdi-container
-    parameters:
-      service: hana
-      service-plan: hdi-shared
-
   - name: poc-cash-uaa
     type: org.cloudfoundry.managed-service
     parameters:

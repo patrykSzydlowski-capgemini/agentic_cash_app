@@ -1,0 +1,47 @@
+# PLACEHOLDER — not deployable yet. Module/resource names and configuration
+# are stubs to be filled in once Sprint 0 (S/4 API validation, mailbox app
+# registration, Destination service setup) resolves. See CLAUDE.md.
+
+_schema-version: "3.3"
+ID: poc-cash-application-agent
+version: 0.0.1
+
+modules:
+  # TODO: srv/ — the CAP Node.js/TypeScript service (agents, cash-app-service, scheduler)
+  - name: poc-cash-application-agent-srv
+    type: nodejs
+    path: srv
+    requires: []
+    provides: []
+
+  # TODO: app/ — the plain HTML/TypeScript SPA (open items, ingestion log, matching queue)
+  - name: poc-cash-application-agent-app
+    type: html5
+    path: app
+    requires: []
+
+  # TODO: db-deployer for the HANA Cloud schema (Payments, ProposedMatches, IngestionLog)
+  - name: poc-cash-application-agent-db-deployer
+    type: hdb
+    path: db
+    requires: []
+
+resources:
+  # TODO: SAP HANA Cloud instance/schema
+  - name: poc-cash-application-agent-db
+    type: com.sap.xs.hdi-container
+
+  # TODO: XSUAA instance bound to xs-security.json (still a placeholder itself)
+  - name: poc-cash-application-agent-auth
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: xsuaa
+      service-plan: application
+      path: ./xs-security.json
+
+  # TODO: Destination service instance — S/4 read/write, AR mailbox, optional bank feed
+  - name: poc-cash-application-agent-destination
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite

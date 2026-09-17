@@ -1,0 +1,9 @@
+{
+  "_placeholder": true,
+  "_note": "Placeholder only — real scopes/role-collections/attributes TBD once the UI and approval workflow are built. Do not deploy as-is.",
+  "xsappname": "poc-cash-application-agent",
+  "tenant-mode": "dedicated",
+  "scopes": [],
+  "role-templates": [],
+  "attributes": []
+}

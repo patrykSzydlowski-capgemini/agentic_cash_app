@@ -1,8 +1,13 @@
 import cds from '@sap/cds'
 import type { Request } from '@sap/cds'
-import type { ingestAgentMatch } from '../@cds-models/CashSyncService/index.js'
+import { randomUUID } from 'node:crypto'
+import type { ingestAgentMatch, processPaymentDocument } from '../@cds-models/CashSyncService/index.js'
+import { extractPayment } from './agents/extraction-agent.js'
+import { proposeMatches } from './agents/matching-agent.js'
+import type { OpenItem } from './s4/open-items-client.js'
 
 const { INSERT, UPDATE } = cds.ql
+type ProcessPaymentDocumentPayload = Parameters<typeof processPaymentDocument>[0]
 
 // Local-first: OpenItem is served from SQLite (poc.cash.OpenItem).
 // Remote SAP mock (ZAC_OPENITEMS_MOC_O4) kept in srv/external/ for reference only.
@@ -31,17 +36,74 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         })
 
         this.on('ingestAgentMatch', async (req: Request) => {
-            const { match_id, open_item_id, matched_amount, confidence } = req.data as IngestAgentMatchPayload
+            const { match_id, open_item_id, matched_amount, confidence, review_reason } = req.data as IngestAgentMatchPayload
 
             await INSERT.into(DbMatchResult).entries({
                 match_id,
                 open_item_OpenItemId: open_item_id,
                 matched_amount,
+                confidence,
+                review_reason,
                 match_status: Number(confidence) > 0.8 ? 'MATCHED' : 'NEEDS_REVIEW',
                 action_required: Number(confidence) <= 0.8,
             })
 
             return 'Match stored successfully'
+        })
+
+        // Local-first pipeline: extraction -> matching -> persistence.
+        // PDF bytes are not processed unless a real provider is wired in via
+        // CASH_AI_ENABLED; the OpenItems source is local SQLite by default.
+        this.on('processPaymentDocument', async (req: Request) => {
+            const { pdfBase64 } = req.data as ProcessPaymentDocumentPayload
+            if (!pdfBase64) req.error({ code: '400', message: 'pdfBase64 is required' })
+            const pdfBytes = Buffer.from(pdfBase64 ?? '', 'base64')
+
+            const extract = await import('./agents/integration-mocks.js')
+                .then(m => m.extractDocument)
+                .catch(() => {
+                    throw new Error('No extraction provider available.')
+                })
+            const payment = await extractPayment(pdfBytes, extract)
+
+            const { OpenItem: DbOpenItem } = cds.entities('poc.cash')
+            const rows = await SELECT.from(DbOpenItem)
+            const openItems: OpenItem[] = rows.map((row: Record<string, unknown>) => ({
+                openItemId: String(row.OpenItemId),
+                companyCode: String(row.CompanyCode),
+                customerAccount: String(row.CustomerAccount),
+                customerName: String(row.CustomerName),
+                invoiceAmount: Number(row.InvoiceAmount),
+                invoiceAmountCurrency: String(row.InvoiceAmountCurr),
+                clearingStatus: String(row.ClearingStatus),
+            }))
+
+            const complete = (await import('./agents/integration-mocks.js')).generateText
+            const candidates = await proposeMatches(payment, openItems, complete)
+
+            const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
+            // INSERT does not return the generated key back to the handler;
+            // generate the cuid up front so child rows can reference it.
+            const paymentId = randomUUID()
+            await INSERT.into(Payments).entries({
+                ID: paymentId,
+                payer: payment.payer,
+                amount: payment.amount,
+                currency: payment.currency,
+                valueDate: payment.valueDate,
+                references: payment.references,
+                extractionConfidence: payment.extractionConfidence,
+            })
+            await INSERT.into(ProposedMatches).entries(candidates.map(candidate => ({
+                payment_ID: paymentId,
+                openItemId: candidate.openItemId,
+                companyCode: candidate.companyCode,
+                matchStatus: candidate.matchStatus,
+                matchScore: candidate.matchScore,
+                rationale: candidate.rationale,
+            })))
+
+            return `Stored ${candidates.length} proposed match(es) for payment ${paymentId}`
         })
 
         return super.init()

@@ -1,8 +1,14 @@
 # poc_cash — Cash Matching Dashboard
 
 CAP Node.js 10 with a TypeScript backend and local SQLite. The Fiori Elements
-List Report/Object Page in `app/cashsync-ui` remains JavaScript; no UI migration
-or changes to the OData model are required for backend TypeScript.
+List Report/Object Page in `app/cashsync-ui` remains JavaScript.
+
+The payment-processing workflow (extraction → matching → review) was imported
+from [AlexanderX/ts-agentic-poc](https://github.com/AlexanderX/ts-agentic-poc)
+(Apache-2.0, see `LICENSE`). Its agents, GenAI orchestration client, S/4 open
+items/clearing clients, fixture scripts and architecture docs are now part of
+this project; the `poc.cashapp` CDS namespace (`db/payments.cds`) holds its
+payment/proposal model. See `docs/upstream/` for the original project docs.
 
 ## Development
 
@@ -21,50 +27,76 @@ launch page at http://localhost:4004 and follow the UI link, or request
 `npm run watch` respects the existing database configuration instead. If that
 SQLite file has no schema, reads fail; do not confuse this with a TypeScript
 error. Database deployment requires explicit approval and is not part of this
-migration.
+integration.
+
+## Imported workflow
+
+- `srv/agents/extraction-agent.ts` / `matching-agent.ts` — extraction and
+  matching logic from ts-agentic-poc; AI calls are injectable for tests.
+- `srv/genai/orchestration-client.ts` — SAP AI Core / Generative AI Hub
+  wrapper. Inert unless `CASH_AI_ENABLED=true` (with a configured AI Core
+  binding); otherwise it throws `IntegrationUnavailableError` instead of
+  silently mocking.
+- `srv/s4/open-items-client.ts` — destination-backed S/4 read adapter
+  (`HD0_BAS` by default, `S4_DESTINATION_NAME` to override). Requires
+  `CASH_S4_ENABLED=true`; rejects paginated responses instead of matching on
+  partial data. Local pipeline runs read from SQLite `poc.cash.OpenItem`.
+- `srv/s4/clearing-client.ts` — posting client with injected HTTP layer;
+  disabled unless `CASH_S4_ENABLED=true`. Unit-tested in
+  `test/clearing-client.test.ts`.
+- `scripts/run-extraction-fixtures.ts`, `scripts/run-matching-fixtures.ts` —
+  manual fixture runners against `test-fixtures/remittance-samples/`.
+  `scripts/mail-read.ts` — IMAP mailbox diagnostic (needs a MAIL destination;
+  review before pointing it at a real mailbox).
+- New unbound action `CashSyncService.processPaymentDocument(pdfBase64)`:
+  extracts (mock provider by default), matches against local open items, and
+  persists `poc.cashapp.Payments` + `ProposedMatches`, exposed as read-only
+  OData entities with UI annotations.
+- `MatchResult` gained `confidence` and `review_reason`; `ingestAgentMatch`
+  now persists both.
 
 ## Checks and production build
 
 ```sh
-npm test                 # five HTTP tests against the TypeScript server
+npm test                 # ten tests: HTTP + agents + clearing client
 npm run typecheck        # regenerate CDS types, then check active backend/tests
-npm run build:server     # CAP production build, including TypeScript compilation
-npm run test:built       # rebuild, then five HTTP tests against compiled JS
-npm run typecheck:all    # includes agents using explicit local integration mocks
+npm run typecheck:all    # whole tree including scripts
+npm run build:server     # CAP production build -> gen/srv
+npm run test:built       # rebuild, then ten HTTP tests against compiled JS
+mbt build -t gen --mtar mta.mtar   # MTA archive (needs gen/srv)
 ```
 
 `npm run cds:types` generates ignored `@cds-models` declarations from CDS.
-The service uses these declarations for its action payload type. The
-`tsconfig.cdsbuild.json` build excludes tests and inactive agents; output is
-`gen/srv/srv/cat-service.js`, accompanied by the compiled CAP model and package
-files. `npm start` is the production `cds-serve` entrypoint; use it from the built
-`gen/srv` package with the required dependencies and database configuration,
-not as the development TypeScript launcher.
+`cds.build.tasks` in `package.json` pins the typescript and nodejs tasks —
+each `cds build` wipes `gen/`, so the production artifacts are produced by one
+run. Output: `gen/srv`. `npm start` is the production `cds-serve` entrypoint
+from the built `gen/srv` package.
 
 `test:built` creates a temporary copy under ignored `_out/`, adds only fixture
-CSVs (not a second CDS schema), and runs the compiled service with plain Node.js.
-The test runner uses tsx, but the compiled **server process does not**. Both test
-modes use disposable in-memory databases and stop their server after the tests.
+CSVs, and runs the compiled service with plain Node.js. Both test modes use
+disposable in-memory databases and stop their server after the tests.
 
 ## Known boundaries
 
-- Agents are not wired into the service. Missing GenAI/S4 imports are commented
-  out and replaced by explicit local mocks in `srv/agents/integration-mocks.ts`.
-  Extraction ignores PDF contents and returns synthetic data with zero confidence;
-  payer resolution returns no matches. These are development placeholders, not
-  real integrations. `typecheck:all` checks all agents and now passes.
-- `analyzeWithGemini` remains declared without a handler, as before. The existing
-  `ingestAgentMatch` implementation still ignores `review_reason`.
-- The migration fixes the old entity lookup: `cds.entities('poc.cash')` exposes
-  the short `MatchResult` key. Actions retain their statuses and confidence > 0.8
-  threshold.
-- HANA/HDI, XSUAA, approuter and MTA deployment readiness are separate tasks.
-  No deployment or cloud binding changes were made.
-- The dependency installation reported 61 audit findings. No automatic or
-  forceful audit fixes were applied; review them separately with `npm audit`.
+- Live AI and S/4 calls stay disabled by default (`CASH_AI_ENABLED` /
+  `CASH_S4_ENABLED`). Without them the pipeline uses the explicit local mocks
+  from `srv/agents/integration-mocks.ts` (zero confidence, no payer
+  resolution) — never presented as real results.
+- `postClearing` posts sequentially without durable per-item progress; a
+  failure mid-batch can duplicate already-posted items on retry. It is not
+  reachable without `CASH_S4_ENABLED=true`.
+- `analyzeWithGemini` remains declared without a handler, as before.
+- The database is SQLite-only by decision (no HANA/HDI module or resource in
+  `mta.yaml`). XSUAA, approuter and MTA deployment are separate tasks; nothing
+  was deployed.
+- The dependency installation reported audit findings (1 low / 17 moderate /
+  34 high / 11 critical). No automatic or forceful audit fixes were applied;
+  review them separately with `npm audit`.
 
 ## References
 
 - [CAP TypeScript](https://cap.cloud.sap/docs/node.js/typescript)
 - [CDS Typer and build integration](https://cap.cloud.sap/docs/tools/cds-typer)
 - [CAP deployment build](https://cap.cloud.sap/docs/guides/deploy/build)
+- [SAP Cloud SDK](https://sap.github.io/cloud-sdk/docs/js/overview)
+- [SAP AI SDK orchestration](https://sap.github.io/ai-sdk/docs/js/orchestration)

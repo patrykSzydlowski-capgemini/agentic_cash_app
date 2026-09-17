@@ -64,6 +64,8 @@ entity MatchResult {
       match_status    : String(20);
       matched_amount  : Decimal(15, 2);
       variance_amount : Decimal(15, 2);
+      confidence      : Decimal(5, 2);
+      review_reason   : String(500);
       source_label    : String(50);
       action_required : Boolean;
       review_status   : String(20);

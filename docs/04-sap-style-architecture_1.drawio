@@ -1,0 +1,127 @@
+<mxfile host="Electron">
+  <diagram id="sap-style-arch" name="SAP Style Architecture">
+    <mxGraphModel dx="2019" dy="1204" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="800" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="zoneA" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=center;fontColor=#FFFFFF;fontStyle=1;fillColor=#223564;strokeColor=#223564;fontSize=13;" value="External Sources" vertex="1">
+          <mxGeometry height="30" width="240" x="20" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="zoneA_body" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F6F7;strokeColor=#223564;verticalAlign=top;" value="" vertex="1">
+          <mxGeometry height="280" width="240" x="20" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="mailbox" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E9F0FB;strokeColor=#0070F2;fontColor=#223564;arcSize=12;" value="📧 AR Shared Mailbox&#xa;(Exchange Online / Graph API)" vertex="1">
+          <mxGeometry height="70" width="200" x="40" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="bankfeed" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E9F0FB;strokeColor=#0070F2;fontColor=#223564;arcSize=12;" value="🏦 Bank Statement Feed&#xa;(optional — e.g. SAP Multi-Bank&#xa;Connectivity)" vertex="1">
+          <mxGeometry height="80" width="200" x="40" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="user" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#223564;fontColor=#223564;fontStyle=1;" value="👤 AR Accountant" vertex="1">
+          <mxGeometry height="50" width="200" x="40" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="zoneB" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=center;fontColor=#FFFFFF;fontStyle=1;fillColor=#0070F2;strokeColor=#0070F2;fontSize=13;" value="SAP Business Technology Platform — Cloud Foundry Environment" vertex="1">
+          <mxGeometry height="30" width="800" x="300" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="zoneB_body" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F6F7;strokeColor=#0070F2;verticalAlign=top;" value="" vertex="1">
+          <mxGeometry height="610" width="800" x="300" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="sched" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8C9BAB;fontColor=#223564;arcSize=12;" value="⏲ Scheduler&#xa;(in-process cron)" vertex="1">
+          <mxGeometry height="60" width="180" x="330" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="ui" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8C9BAB;fontColor=#223564;arcSize=12;" value="🖥 Web UI (HTML/TypeScript SPA)&#xa;Open items · Ingestion log · Matching&#xa;queue · Approve / Reject" vertex="1">
+          <mxGeometry height="70" width="230" x="540" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="agent0" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E9FB;strokeColor=#9673A6;fontColor=#4A2E5C;arcSize=12;" value="🤖 Agent 1: Ingestion Agent&#xa;skills: read mailbox, read bank&#xa;statement feed" vertex="1">
+          <mxGeometry height="80" width="230" x="330" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="agent1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E9FB;strokeColor=#9673A6;fontColor=#4A2E5C;arcSize=12;" value="🤖 Agent 2: Extraction Agent&#xa;PDF (any format) → structured&#xa;payment data" vertex="1">
+          <mxGeometry height="80" width="230" x="570" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="agent2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E9FB;strokeColor=#9673A6;fontColor=#4A2E5C;arcSize=12;" value="🤖 Agent 3: Matching Agent&#xa;payment + open items →&#xa;proposed match &amp; status" vertex="1">
+          <mxGeometry height="80" width="230" x="330" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="cap" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8C9BAB;fontColor=#223564;arcSize=12;" value="⚙ CAP Service (Node.js + TypeScript)&#xa;CDS entities, ingestion log,&#xa;approval &amp; posting workflow" vertex="1">
+          <mxGeometry height="80" width="230" x="570" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="aicore" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E9FB;strokeColor=#9673A6;fontColor=#4A2E5C;fontStyle=1;arcSize=8;" value="🧠 SAP AI Core / Generative AI Hub — orchestration + Claude Sonnet model (shared by all three agents)" vertex="1">
+          <mxGeometry height="60" width="470" x="330" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="xsuaa" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDECEA;strokeColor=#B85450;fontColor=#7A2E27;arcSize=12;" value="🔒 XSUAA&#xa;(Authentication)" vertex="1">
+          <mxGeometry height="60" width="230" x="330" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="dest" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FDECEA;strokeColor=#B85450;fontColor=#7A2E27;arcSize=12;" value="🔗 Destination Service&#xa;(mailbox, bank feed, S/4 read, S/4 write)" vertex="1">
+          <mxGeometry height="60" width="230" x="570" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="db" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8C9BAB;fontColor=#223564;arcSize=12;" value="🗃 SAP HANA Cloud (free tier)&#xa;Payments · ProposedMatches · Ingestion &amp; audit log" vertex="1">
+          <mxGeometry height="60" width="470" x="330" y="610" as="geometry" />
+        </mxCell>
+        <mxCell id="zoneC" parent="1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=center;fontColor=#FFFFFF;fontStyle=1;fillColor=#7A6000;strokeColor=#7A6000;fontSize=13;" value="SAP S/4HANA Cloud Public Edition" vertex="1">
+          <mxGeometry height="30" width="280" x="1140" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="zoneC_body" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F6F7;strokeColor=#7A6000;verticalAlign=top;" value="" vertex="1">
+          <mxGeometry height="330" width="280" x="1140" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="s4read" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF6DE;strokeColor=#D6B656;fontColor=#5C4B10;arcSize=12;" value="📊 Open Items API (read)&#xa;Customer Line Items /&#xa;Journal Entry Item OData" vertex="1">
+          <mxGeometry height="80" width="240" x="1160" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="s4write" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF6DE;strokeColor=#D6B656;fontColor=#5C4B10;arcSize=12;" value="✅ Clearing / Posting API (write)&#xa;Post clearance document&#xa;— validate in Sprint 0 —" vertex="1">
+          <mxGeometry height="80" width="240" x="1160" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="sched" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="agent0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="agent0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="mailbox" value="poll">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="agent0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="bankfeed" value="poll (optional)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="agent0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="agent1" value="new document">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="agent1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="agent2" value="structured payment">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="agent2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="cap" value="proposed matches">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="agent0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;dashed=1;" target="cap">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="cap" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="ui" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="user">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" source="cap" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="db">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" edge="1" parent="1" source="cap" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="xsuaa">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" edge="1" parent="1" source="cap" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="dest">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" edge="1" parent="1" source="agent0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673A6;dashed=1;" target="aicore">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" edge="1" parent="1" source="agent1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673A6;dashed=1;" target="aicore">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e15" edge="1" parent="1" source="agent2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#9673A6;dashed=1;" target="aicore">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" edge="1" parent="1" source="dest" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="s4read" value="read open items">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" edge="1" parent="1" source="dest" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#647687;" target="s4write" value="post clearance&#xa;(after human approval)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;fontColor=#647687;fontSize=11;fontStyle=2;align=left;" value="Legend:  ● External source   ● BTP platform service   ● AI Core / Agent (Generative AI Hub)   ● SAP S/4HANA API" vertex="1">
+          <mxGeometry height="30" width="900" x="20" y="740" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

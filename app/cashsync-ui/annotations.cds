@@ -36,3 +36,31 @@ annotate service.OpenItem with @(
         { Value: ClearingStatus,  Label: 'Status' }
     ]
 );
+
+annotate service.Payments with @(
+    UI.HeaderInfo : {
+        TypeName       : 'Płatność',
+        TypeNamePlural : 'Płatności',
+        Title          : { $Type: 'UI.DataField', Value: payer }
+    },
+    UI.LineItem : [
+        { Value: payer,                Label: 'Płatnik' },
+        { Value: amount,               Label: 'Kwota' },
+        { Value: currency,             Label: 'Waluta' },
+        { Value: valueDate,            Label: 'Data' },
+        { Value: extractionConfidence, Label: 'Pewność AI' },
+        { Value: status,               Label: 'Status' }
+    ]
+);
+
+annotate service.ProposedMatches with @(
+    UI.LineItem : [
+        { Value: payment_ID,   Label: 'Płatność' },
+        { Value: openItemId,   Label: 'ID Pozycji SAP' },
+        { Value: companyCode,  Label: 'Kod Firmy' },
+        { Value: matchStatus,  Label: 'Status Dopasowania' },
+        { Value: matchScore,   Label: 'Wynik' },
+        { Value: reviewStatus, Label: 'Przegląd' },
+        { Value: rationale,    Label: 'Analiza AI' }
+    ]
+);

@@ -101,3 +101,22 @@ for (const confidence of [0.81, 0.8, 0.79]) {
         assert.equal(Number(match.matched_amount), 100);
     });
 }
+
+test('processPaymentDocument stores payment and proposed matches without live integrations', async () => {
+    const paymentsBefore = (await get('/Payments')).value.length;
+    const response = await post('/processPaymentDocument', { pdfBase64: Buffer.from('unused').toString('base64') });
+    assert.match((await response.json()).value, /Stored 1 proposed match/);
+
+    const payments = (await get('/Payments')).value;
+    assert.equal(payments.length, paymentsBefore + 1);
+    const payment = payments.at(-1);
+    assert.match(payment.payer, /\[MOCK\]/);
+    assert.equal(Number(payment.extractionConfidence), 0);
+    assert.equal(payment.status, 'extracted');
+
+    const matches = await get(`/Payments('${payment.ID}')/matches`);
+    assert.equal(matches.value.length, 1);
+    assert.equal(matches.value[0].matchStatus, 'noMatch');
+    assert.match(matches.value[0].rationale, /\[MOCK\]/);
+    assert.equal(matches.value[0].reviewStatus, 'pending');
+});

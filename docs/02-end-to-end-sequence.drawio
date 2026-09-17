@@ -1,0 +1,69 @@
+<mxfile host="app.diagrams.net">
+  <diagram id="e2e-sequence" name="End-to-End Sequence">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Lifeline headers -->
+        <mxCell id="h0" value="Scheduler" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="20" y="20" width="110" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h1" value="Agent 1:&#10;Ingestion" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="180" y="20" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h2" value="Mailbox /&#10;Bank feed" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="350" y="20" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h3" value="Agent 2:&#10;Extraction" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="520" y="20" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h4" value="Agent 3:&#10;Matching" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="690" y="20" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h5" value="CAP Service" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="860" y="20" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h6" value="Accountant&#10;(Web UI)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="20" width="120" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="h7" value="S/4HANA API" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="1200" y="20" width="130" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Lifelines -->
+        <mxCell id="l0" style="endArrow=none;dashed=1;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="75" y="60" as="sourcePoint" /><mxPoint x="75" y="960" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="l1" style="endArrow=none;dashed=1;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="240" y="60" as="sourcePoint" /><mxPoint x="240" y="960" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="l2" style="endArrow=none;dashed=1;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="410" y="60" as="sourcePoint" /><mxPoint x="410" y="960" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="l3" style="endArrow=none;dashed=1;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="580" y="60" as="sourcePoint" /><mxPoint x="580" y="960" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="l4" style="endArrow=none;dashed=1;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="750" y="60" as="sourcePoint" /><mxPoint x="750" y="960" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="l5" style="endArrow=none;dashed=1;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="920" y="60" as="sourcePoint" /><mxPoint x="920" y="960" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="l6" style="endArrow=none;dashed=1;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="1090" y="60" as="sourcePoint" /><mxPoint x="1090" y="960" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="l7" style="endArrow=none;dashed=1;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="1265" y="60" as="sourcePoint" /><mxPoint x="1265" y="960" as="targetPoint" /></mxGeometry></mxCell>
+
+        <!-- Steps -->
+        <mxCell id="s1" value="1. Trigger (every N minutes)" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="75" y="100" as="sourcePoint" /><mxPoint x="240" y="100" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s2" value="2. Poll for new messages / files" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="240" y="140" as="sourcePoint" /><mxPoint x="410" y="140" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s3" value="3. New emails / statement files" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="410" y="180" as="sourcePoint" /><mxPoint x="240" y="180" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s4" value="4. Classify: relevant remittance/&#10;statement vs. irrelevant mail" style="endArrow=block;html=1;dashed=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="240" y="230" as="sourcePoint" /><mxPoint x="280" y="230" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s5" value="5. Download relevant attachment(s) / files" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="240" y="270" as="sourcePoint" /><mxPoint x="410" y="270" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s6" value="6. Log ingested document" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="240" y="310" as="sourcePoint" /><mxPoint x="920" y="310" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s7" value="7. Hand off PDF" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="240" y="350" as="sourcePoint" /><mxPoint x="580" y="350" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s8" value="8. structured payment(s): payer, amount,&#10;currency, date, references[]" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="580" y="400" as="sourcePoint" /><mxPoint x="750" y="400" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s9" value="9. GET open items for resolved customer" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="750" y="440" as="sourcePoint" /><mxPoint x="1265" y="440" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s10" value="10. open items list" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="1265" y="480" as="sourcePoint" /><mxPoint x="750" y="480" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s11" value="11. proposed matches + status + rationale" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="750" y="520" as="sourcePoint" /><mxPoint x="920" y="520" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s12" value="12. persist Payment + ProposedMatch" style="endArrow=block;html=1;dashed=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="920" y="560" as="sourcePoint" /><mxPoint x="960" y="560" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s13" value="13. matching queue with status badges" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="920" y="610" as="sourcePoint" /><mxPoint x="1090" y="610" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s14" value="14. review &amp; approve match(es)&#10;(human-in-the-loop gate)" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="1090" y="660" as="sourcePoint" /><mxPoint x="920" y="660" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s15" value="15. POST clearing document&#10;(customer, open item keys, amount)" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="920" y="710" as="sourcePoint" /><mxPoint x="1265" y="710" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s16" value="16. clearing document number / status" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="1265" y="750" as="sourcePoint" /><mxPoint x="920" y="750" as="targetPoint" /></mxGeometry></mxCell>
+        <mxCell id="s17" value="17. update status: Cleared; show confirmation" style="endArrow=block;html=1;" edge="1" parent="1"><mxGeometry relative="1" as="geometry"><mxPoint x="920" y="790" as="sourcePoint" /><mxPoint x="1090" y="790" as="targetPoint" /></mxGeometry></mxCell>
+
+        <mxCell id="note" value="No human action anywhere before step 14. The accountant's&#10;first touchpoint is reviewing an already-matched proposal —&#10;not finding or uploading the document. Manual upload (not&#10;shown) remains available as a fallback entry point into step 7." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="850" width="500" height="70" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
