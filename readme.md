@@ -33,10 +33,12 @@ integration.
 
 - `srv/agents/extraction-agent.ts` / `matching-agent.ts` — extraction and
   matching logic from ts-agentic-poc; AI calls are injectable for tests.
-- `srv/genai/orchestration-client.ts` — SAP AI Core / Generative AI Hub
-  wrapper. Inert unless `CASH_AI_ENABLED=true` (with a configured AI Core
-  binding); otherwise it throws `IntegrationUnavailableError` instead of
-  silently mocking.
+- `srv/genai/openai-compatible-client.ts` — OpenAI-compatible chat client
+  aimed at OpenRouter (any compatible endpoint via `OPENROUTER_BASE_URL`).
+  Inert unless `CASH_AI_ENABLED=true` with `OPENROUTER_API_KEY`; otherwise it
+  throws `IntegrationUnavailableError` instead of silently mocking. Default
+  model is a free OpenRouter tier (`thinkingmachines/inkling-small:free`,
+  override with `OPENROUTER_MODEL`).
 - `srv/s4/open-items-client.ts` — destination-backed S/4 read adapter
   (`HD0_BAS` by default, `S4_DESTINATION_NAME` to override). Requires
   `CASH_S4_ENABLED=true`; rejects paginated responses instead of matching on
@@ -79,21 +81,24 @@ disposable in-memory databases and stop their server after the tests.
 ## Enabling real AI
 
 The pipeline runs on explicit local mocks by default. To use real AI through
-SAP AI Core / Generative AI Hub (orchestration, via `@sap-ai-sdk/orchestration`):
+OpenRouter (OpenAI-compatible API, free models available):
 
-1. Create an AI Core service instance/key in BTP (or use an existing one) and
-   copy `.env.example` to `.env` (git-ignored). Fill `AICORE_SERVICE_KEY` with
-   the full service-key JSON and set `CASH_AI_ENABLED=true`.
-2. Restart the server (`npm run dev`). The SDK picks the credentials up
-   automatically; model/resource-group defaults can be overridden with
-   `AICORE_MODEL` / `AICORE_RESOURCE_GROUP`.
+1. Get an API key at https://openrouter.ai/keys, copy `.env.example` to `.env`
+   (git-ignored) and set:
+   ```env
+   CASH_AI_ENABLED=true
+   OPENROUTER_API_KEY=sk-or-v1-...
+   ```
+   The default model is a **free** OpenRouter tier
+   (`thinkingmachines/inkling-small:free`) that accepts PDF/image input;
+   change it with `OPENROUTER_MODEL`, the endpoint with `OPENROUTER_BASE_URL`.
+2. Restart the server (`npm run dev`).
 3. Call `processPaymentDocument` with a real PDF (base64) — extraction and the
-   fuzzy payer-resolution step now go through Generative AI Hub. Mock mode
-   remains the default whenever `CASH_AI_ENABLED` is unset/false.
+   fuzzy payer-resolution step now go through OpenRouter. Mock mode remains
+   the default whenever `CASH_AI_ENABLED` is unset/false.
 
-On Cloud Foundry, bind the AI Core instance to the app instead of using `.env`;
-the SDK resolves the binding itself. Never commit `.env`, service keys or
-tokens.
+Quick live check without the server: `node --import tsx scripts/live-ai-check.ts`.
+Never commit `.env` or API keys.
 
 ## Known boundaries
 

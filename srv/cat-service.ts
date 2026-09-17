@@ -52,23 +52,19 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         })
 
         // Local-first pipeline: extraction -> matching -> persistence.
-        // Real AI (SAP AI Core orchestration) is used when CASH_AI_ENABLED=true
-        // with valid AICORE_SERVICE_KEY credentials; otherwise the explicit
-        // local mock keeps the pipeline runnable offline.
+        // Live provider is the OpenAI-compatible client (OpenRouter by
+        // default) when CASH_AI_ENABLED=true; otherwise the explicit local
+        // mock keeps the pipeline runnable offline.
         this.on('processPaymentDocument', async (req: Request) => {
             const { pdfBase64 } = req.data as ProcessPaymentDocumentPayload
             if (!pdfBase64) req.error({ code: '400', message: 'pdfBase64 is required' })
             const pdfBytes = Buffer.from(pdfBase64 ?? '', 'base64')
 
-            const live = process.env.CASH_AI_ENABLED === 'true'
-            const extract: (pdf: Buffer, prompt: string) => Promise<string> = live
-                ? (await import('./genai/orchestration-client.js')).extractDocument
-                : (await import('./agents/integration-mocks.js')).extractDocument
-            const complete: (prompt: string) => Promise<string> = live
-                ? (await import('./genai/orchestration-client.js')).generateText
-                : (await import('./agents/integration-mocks.js')).generateText
+            const provider = process.env.CASH_AI_ENABLED === 'true'
+                ? await import('./genai/openai-compatible-client.js')
+                : await import('./agents/integration-mocks.js')
 
-            const payment = await extractPayment(pdfBytes, extract)
+            const payment = await extractPayment(pdfBytes, provider.extractDocument)
 
             const { OpenItem: DbOpenItem } = cds.entities('poc.cash')
             const rows = await SELECT.from(DbOpenItem)
@@ -82,7 +78,7 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 clearingStatus: String(row.ClearingStatus),
             }))
 
-            const candidates = await proposeMatches(payment, openItems, complete)
+            const candidates = await proposeMatches(payment, openItems, provider.generateText)
 
             const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
             // INSERT does not return the generated key back to the handler;

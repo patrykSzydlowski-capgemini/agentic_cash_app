@@ -6,7 +6,6 @@
   "type": "module",
   "dependencies": {
     "@cap-js/sqlite": "^3.1.0",
-    "@sap-ai-sdk/orchestration": "^2.15.0",
     "@sap-cloud-sdk/connectivity": "^4.9.1",
     "@sap-cloud-sdk/http-client": "^4.9.1",
     "@sap/cds": "^10.1.0",
@@ -48,8 +47,33 @@
     },
     "build": {
       "tasks": [
-        { "for": "typescript", "src": ".", "options": { "model": ["db", "srv", "app", "app/*", "@sap/cds/srv/outbox", "."] } },
-        { "for": "nodejs", "src": "srv", "options": { "model": ["db", "srv", "app", "app/*", "@sap/cds/srv/outbox"] } }
+        {
+          "for": "typescript",
+          "src": ".",
+          "options": {
+            "model": [
+              "db",
+              "srv",
+              "app",
+              "app/*",
+              "@sap/cds/srv/outbox",
+              "."
+            ]
+          }
+        },
+        {
+          "for": "nodejs",
+          "src": "srv",
+          "options": {
+            "model": [
+              "db",
+              "srv",
+              "app",
+              "app/*",
+              "@sap/cds/srv/outbox"
+            ]
+          }
+        }
       ]
     }
   }
