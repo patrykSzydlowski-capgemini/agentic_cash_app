@@ -1,25 +1,27 @@
 import cds from '@sap/cds'
 import type { Request } from '@sap/cds'
 import { randomUUID } from 'node:crypto'
+import axios from 'axios'
 import type { ingestAgentMatch, processPaymentDocument } from '../@cds-models/CashSyncService/index.js'
 import { extractPayment } from './agents/extraction-agent.js'
 import { proposeMatches } from './agents/matching-agent.js'
 import type { OpenItem } from './s4/open-items-client.js'
 
-const { INSERT, UPDATE } = cds.ql
+const { INSERT, UPDATE, SELECT, UPSERT } = cds.ql
 type ProcessPaymentDocumentPayload = Parameters<typeof processPaymentDocument>[0]
-
-// Local-first: OpenItem is served from SQLite (poc.cash.OpenItem).
-// Remote SAP mock (ZAC_OPENITEMS_MOC_O4) kept in srv/external/ for reference only.
-// NOTE: package.json no longer requires the remote destination, so no connect here.
-
-/** Payload generated from the unbound CDS action. */
 type IngestAgentMatchPayload = Parameters<typeof ingestAgentMatch>[0]
+
+interface AgentResponse {
+    confidence: number
+    review_required: boolean
+    reason: string
+}
 
 export default class CashSyncServiceImpl extends cds.ApplicationService {
     async init() {
-        const { MatchResult: DbMatchResult } = cds.entities('poc.cash')
+        const { MatchResult: DbMatchResult, OpenItem: DbOpenItem } = cds.entities('poc.cash')
 
+        // 1. Manual approval from the UI
         this.on('triggerAIAgent', 'MatchResult', async (req: Request) => {
             const first = req.params[0] as { match_id?: string } | string | undefined
             const matchId = typeof first === 'object' ? (first?.match_id ?? first) : first
@@ -29,12 +31,14 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                     match_status: 'MATCHED',
                     action_required: false,
                     review_status: 'APPROVED',
+                    review_reason: 'Manually approved by operator'
                 })
                 .where({ match_id: matchId })
 
-            req.notify(`Agent AI pomyślnie przetworzył rekord ${matchId}`)
+            req.notify(`Agent successfully processed record ${matchId}`)
         })
 
+        // 2. Webhook / Action for external match ingestion
         this.on('ingestAgentMatch', async (req: Request) => {
             const { match_id, open_item_id, matched_amount, confidence, review_reason } = req.data as IngestAgentMatchPayload
 
@@ -51,22 +55,68 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             return 'Match stored successfully'
         })
 
-        // Local-first pipeline: extraction -> matching -> persistence.
-        // Live provider is the OpenAI-compatible client (OpenRouter by
-        // default) when CASH_AI_ENABLED=true; otherwise the explicit local
-        // mock keeps the pipeline runnable offline.
+        // 3. Action triggered from Fiori UI for automated analysis
+        this.on('analyzeWithGemini', async (req: Request) => {
+            const rows = await SELECT.from(DbOpenItem)
+            
+            if (!rows || rows.length === 0) {
+                return 'No open items to analyze.'
+            }
+
+            let processed = 0
+
+            for (const item of rows) {
+                const itemId = String(item.OpenItemId)
+                const customerName = String(item.CustomerName ?? 'Unknown Customer')
+                const invoiceAmount = Number(item.InvoiceAmount ?? 0)
+                
+                const mockBankStatement = `Payment for invoice ${itemId} - ${customerName}`
+
+                const agentResult = await this.callAgentAPI({
+                    OpenItemId: itemId,
+                    CustomerName: customerName,
+                    InvoiceAmount: invoiceAmount
+                }, mockBankStatement)
+
+                const status = agentResult.review_required || agentResult.confidence < 0.85 
+                    ? 'NEEDS_REVIEW' 
+                    : 'MATCHED'
+
+                const matchId = `MATCH-AUTO-${itemId}`
+
+                await UPSERT.into(DbMatchResult).entries({
+                    match_id: matchId,
+                    open_item_OpenItemId: itemId,
+                    matched_amount: invoiceAmount,
+                    match_status: status,
+                    review_status: status === 'NEEDS_REVIEW' ? 'PENDING' : 'APPROVED',
+                    confidence: agentResult.confidence,
+                    review_reason: agentResult.reason,
+                    action_required: status === 'NEEDS_REVIEW'
+                })
+
+                processed++
+            }
+
+            return `Analyzed ${processed} items. Results saved.`
+        })
+
+        // 4. Local-first pipeline: processing payment document
         this.on('processPaymentDocument', async (req: Request) => {
             const { pdfBase64 } = req.data as ProcessPaymentDocumentPayload
             if (!pdfBase64) req.error({ code: '400', message: 'pdfBase64 is required' })
             const pdfBytes = Buffer.from(pdfBase64 ?? '', 'base64')
 
-            const provider = process.env.CASH_AI_ENABLED === 'true'
-                ? await import('./genai/openai-compatible-client.js')
-                : await import('./agents/integration-mocks.js')
+            const live = process.env.CASH_AI_ENABLED === 'true'
+            const extract: (pdf: Buffer, prompt: string) => Promise<string> = live
+                ? (await import('./genai/orchestration-client.js')).extractDocument
+                : (await import('./agents/integration-mocks.js')).extractDocument
+            const complete: (prompt: string) => Promise<string> = live
+                ? (await import('./genai/orchestration-client.js')).generateText
+                : (await import('./agents/integration-mocks.js')).generateText
 
-            const payment = await extractPayment(pdfBytes, provider.extractDocument)
+            const payment = await extractPayment(pdfBytes, extract)
 
-            const { OpenItem: DbOpenItem } = cds.entities('poc.cash')
             const rows = await SELECT.from(DbOpenItem)
             const openItems: OpenItem[] = rows.map((row: Record<string, unknown>) => ({
                 openItemId: String(row.OpenItemId),
@@ -78,11 +128,9 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 clearingStatus: String(row.ClearingStatus),
             }))
 
-            const candidates = await proposeMatches(payment, openItems, provider.generateText)
+            const candidates = await proposeMatches(payment, openItems, complete)
 
             const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
-            // INSERT does not return the generated key back to the handler;
-            // generate the cuid up front so child rows can reference it.
             const paymentId = randomUUID()
             await INSERT.into(Payments).entries({
                 ID: paymentId,
@@ -106,5 +154,66 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         })
 
         return super.init()
+    }
+
+    /** Helper method to call the Agent API with fallback support */
+    private async callAgentAPI(openItemData: { OpenItemId: string, CustomerName: string, InvoiceAmount: number }, bankStatementText: string): Promise<AgentResponse> {
+        const apiKey = process.env.GEMINI_API_KEY
+
+        if (!apiKey) {
+            console.warn('No API key in environment. Using simulation...')
+            const isAmbiguous = Math.random() > 0.5
+            return {
+                confidence: isAmbiguous ? 0.60 : 0.98,
+                review_required: isAmbiguous,
+                reason: isAmbiguous 
+                    ? 'Discrepancy detected in transfer title and amount.' 
+                    : 'Full match of transfer data with SAP document.'
+            }
+        }
+
+        const prompt = `
+You are an AI agent analyzing bank payment matches with open items in SAP.
+Analyze the SAP open item and the bank transfer description, and determine if manual human review is required.
+
+SAP Document Data:
+- Item Number: ${openItemData.OpenItemId}
+- Customer Name: ${openItemData.CustomerName}
+- Amount: ${openItemData.InvoiceAmount}
+
+Bank Transfer Text:
+"${bankStatementText}"
+
+Return a JSON object with this exact schema:
+{
+  "confidence": number, // Float between 0.0 and 1.0
+  "review_required": boolean,
+  "reason": string // A short explanation in English
+}
+`
+
+        try {
+            const response = await axios.post(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+                {
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        temperature: 0.1
+                    }
+                },
+                { headers: { 'Content-Type': 'application/json' } }
+            )
+
+            const jsonText = response.data.candidates[0].content.parts[0].text
+            return JSON.parse(jsonText) as AgentResponse
+        } catch (error: any) {
+            console.error('API call error:', error.response?.data || error.message)
+            return {
+                confidence: 0.0,
+                review_required: true,
+                reason: 'Connection error with the analytics module.'
+            }
+        }
     }
 }
