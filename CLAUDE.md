@@ -12,6 +12,15 @@ Integrated from AlexanderX/ts-agentic-poc (Apache-2.0, `LICENSE`; upstream docs 
 - `app/cashsync-ui`: Fiori Elements LROP on `/MatchResult`; annotations in `app/services.cds`.
 - `mta.yaml` / `xs-security.json` / `approuter/xs-app.json`: BTP scaffolding (build ok, deploy only on explicit approval). No HANA/HDI — SQLite-only.
 
+## Git approval — mandatory, no exceptions
+
+- NEVER create a commit or push without the user's direct, explicit approval for that specific action and set of changes. A request to implement, fix, test, undo, or prepare changes is NOT permission to commit or push.
+- Show the diff and allow the user to review it BEFORE committing. Commit approval does NOT authorize a push; ask separately unless the user explicitly authorized both.
+- NEVER commit directly on `main`/`master`. Use a separate branch for approved commits. Do not merge into or push to `main`/`master` without explicit approval naming that branch.
+- Before undoing commits, confirm the exact commit range and preserve the changes for review. Do not discard work, overwrite teammates' changes, or rewrite published history without explicit approval of that operation.
+- Do not bypass permission prompts or safety hooks through scripts, aliases, other tools, subagents, or direct Git/API operations. Do not remove or weaken these safeguards without the user's explicit request.
+- After preparing changes, STOP with the diff and verification results. Never interpret silence, prior-session permission, or successful tests as approval.
+
 ## Iron rules (always obey)
 
 - CAP/CDS: `search_model` (cds-mcp) FIRST for entity/field/service questions; `search_docs` EVERY TIME before creating/modifying `*.cds` or using CAP APIs / cds CLI. Trust compiled CSN over file reads. Sources of truth: <https://cap.cloud.sap/docs/>.

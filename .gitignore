@@ -5,6 +5,9 @@ gen/
 
 .cdsrc-private.json
 default-*.json
+.env
+*.env
+!.env.example
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

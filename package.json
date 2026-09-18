@@ -38,7 +38,11 @@
     "pretypecheck:all": "npm run cds:types",
     "pretest:built": "npm run build:server",
     "test:built": "node --import tsx --test test/*.test.ts",
-    "build:server": "cds build --production"
+    "build:server": "cds build --production",
+    "ai:check": "node --import tsx scripts/live-ai-check.ts",
+    "ai:process": "node --import tsx scripts/process-payment.ts",
+    "ai:cf:create": "node --import tsx scripts/configure-ai-cf.ts create",
+    "ai:cf:update": "node --import tsx scripts/configure-ai-cf.ts update"
   },
   "cds": {
     "requires": {
@@ -48,8 +52,33 @@
     },
     "build": {
       "tasks": [
-        { "for": "typescript", "src": ".", "options": { "model": ["db", "srv", "app", "app/*", "@sap/cds/srv/outbox", "."] } },
-        { "for": "nodejs", "src": "srv", "options": { "model": ["db", "srv", "app", "app/*", "@sap/cds/srv/outbox"] } }
+        {
+          "for": "typescript",
+          "src": ".",
+          "options": {
+            "model": [
+              "db",
+              "srv",
+              "app",
+              "app/*",
+              "@sap/cds/srv/outbox",
+              "."
+            ]
+          }
+        },
+        {
+          "for": "nodejs",
+          "src": "srv",
+          "options": {
+            "model": [
+              "db",
+              "srv",
+              "app",
+              "app/*",
+              "@sap/cds/srv/outbox"
+            ]
+          }
+        }
       ]
     }
   }

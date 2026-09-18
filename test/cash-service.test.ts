@@ -22,7 +22,7 @@ before(async () => {
         // Test fixtures only; production artifacts do not need demo data.
         await cp('db/data', resolve(project, 'db/data'), { recursive: true });
     }
-    const env = { ...process.env };
+    const env: NodeJS.ProcessEnv = { ...process.env, CASH_AI_ENABLED: 'false', CASH_S4_ENABLED: 'false' };
     if (compiled) delete env.CDS_TYPESCRIPT;
     else env.CDS_TYPESCRIPT = 'true';
     server = spawn(process.execPath, [

@@ -52,19 +52,18 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         })
 
         // Local-first pipeline: extraction -> matching -> persistence.
-        // PDF bytes are not processed unless a real provider is wired in via
-        // CASH_AI_ENABLED; the OpenItems source is local SQLite by default.
+        // OpenRouter by default, optional SAP orchestration via CASH_AI_PROVIDER.
+        // Disabled AI uses explicit local mocks, never fallback after a live error.
         this.on('processPaymentDocument', async (req: Request) => {
             const { pdfBase64 } = req.data as ProcessPaymentDocumentPayload
             if (!pdfBase64) req.error({ code: '400', message: 'pdfBase64 is required' })
             const pdfBytes = Buffer.from(pdfBase64 ?? '', 'base64')
 
-            const extract = await import('./agents/integration-mocks.js')
-                .then(m => m.extractDocument)
-                .catch(() => {
-                    throw new Error('No extraction provider available.')
-                })
-            const payment = await extractPayment(pdfBytes, extract)
+            const provider = process.env.CASH_AI_ENABLED === 'true'
+                ? await (await import('./genai/index.js')).getProvider()
+                : await import('./agents/integration-mocks.js')
+
+            const payment = await extractPayment(pdfBytes, provider.extractDocument)
 
             const { OpenItem: DbOpenItem } = cds.entities('poc.cash')
             const rows = await SELECT.from(DbOpenItem)
@@ -78,8 +77,7 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 clearingStatus: String(row.ClearingStatus),
             }))
 
-            const complete = (await import('./agents/integration-mocks.js')).generateText
-            const candidates = await proposeMatches(payment, openItems, complete)
+            const candidates = await proposeMatches(payment, openItems, provider.generateText)
 
             const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
             // INSERT does not return the generated key back to the handler;
