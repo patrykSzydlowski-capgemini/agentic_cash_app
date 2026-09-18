@@ -12,6 +12,11 @@ annotate service.MatchResult with @(
         action_required
     ],
     UI.LineItem : [
+        {
+            $Type  : 'UI.DataFieldForAction',
+            Action : 'CashSyncService.analyzeWithGemini',
+            Label  : 'Uruchom Analizę AI'
+        },
         { $Type: 'UI.DataField', Value: match_id,                Label: 'ID Dopasowania' },
         { $Type: 'UI.DataField', Value: open_item.OpenItemId,    Label: 'ID Pozycji SAP' },
         { $Type: 'UI.DataField', Value: open_item.CustomerName,  Label: 'Klient' },
@@ -19,6 +24,7 @@ annotate service.MatchResult with @(
         { $Type: 'UI.DataField', Value: confidence,              Label: 'Pewność AI' },
         { $Type: 'UI.DataField', Value: match_status,            Criticality: CriticalityCode, Label: 'Status' },
         { $Type: 'UI.DataField', Value: review_reason,           Label: 'Analiza Gemini AI' },
+        // Przycisk w wierszu tabeli do zatwierdzania konkretnego wpisu
         {
             $Type  : 'UI.DataFieldForAction',
             Action : 'CashSyncService.triggerAIAgent',
