@@ -22,3 +22,11 @@ mta_archives/
 
 # @cap-js/cds-typer
 @cds-models
+
+# Local AI-assisted development (never commit): instructions, MCP servers,
+# skills, compiler cache, reference archives.
+CLAUDE.md
+.mcp.json
+.claude/
+.cds/
+*.zip
