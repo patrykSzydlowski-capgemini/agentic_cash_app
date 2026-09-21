@@ -41,7 +41,8 @@
         "sap.m": {},
         "sap.ui.core": {},
         "sap.fe.templates": {},
-        "sap.f": {}
+        "sap.f": {},
+        "sap.ui.unified": {}
       }
     },
     "contentDensities": {
@@ -73,6 +74,19 @@
       "routes": [
         {
           "pattern": ":?query:",
+          "name": "PaymentsList",
+          "target": "PaymentsList"
+        },
+        {
+          "pattern": "Payments({key}):?query:",
+          "name": "PaymentsObjectPage",
+          "target": [
+            "PaymentsList",
+            "PaymentsObjectPage"
+          ]
+        },
+        {
+          "pattern": "MatchResult:?query:",
           "name": "MatchResultList",
           "target": "MatchResultList"
         },
@@ -83,6 +97,16 @@
             "MatchResultList",
             "MatchResultObjectPage"
           ]
+        },
+        {
+          "name": "OpenItemList",
+          "pattern": "OpenItem:?query:",
+          "target": "OpenItemList"
+        },
+        {
+          "name": "IngestionLogList",
+          "pattern": "IngestionLog:?query:",
+          "target": "IngestionLogList"
         }
       ],
       "targets": {
@@ -99,6 +123,11 @@
                 "MatchResult": {
                   "detail": {
                     "route": "MatchResultObjectPage"
+                  }
+                },
+                "Payments": {
+                  "detail": {
+                    "route": "PaymentsObjectPage"
                   }
                 }
               },
@@ -124,8 +153,82 @@
             }
           },
           "controlAggregation": "midColumnPages"
+        },
+        "PaymentsList": {
+          "type": "Component",
+          "id": "PaymentsList",
+          "name": "sap.fe.templates.ListReport",
+          "options": {
+            "settings": {
+              "contextPath": "/Payments",
+              "variantManagement": "Page",
+              "initialLoad": "Enabled",
+              "navigation": {
+                "Payments": {
+                  "detail": {
+                    "route": "PaymentsObjectPage"
+                  }
+                }
+              },
+              "controlConfiguration": {
+                "@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable"
+                  }
+                }
+              },
+              "content": {
+                "header": {
+                  "actions": {
+                    "uploadPayment": {
+                      "press": "poc.cash.cashsyncui.ext.UploadPayment.onUploadPayment",
+                      "text": "Wgraj awizo (PDF)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "controlAggregation": "beginColumnPages"
+        },
+        "PaymentsObjectPage": {
+          "type": "Component",
+          "id": "PaymentsObjectPage",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "editableHeaderContent": false,
+              "contextPath": "/Payments"
+            }
+          },
+          "controlAggregation": "midColumnPages"
+        },
+        "OpenItemList": {
+          "type": "Component",
+          "id": "OpenItemList",
+          "name": "sap.fe.templates.ListReport",
+          "controlAggregation": "beginColumnPages",
+          "options": {
+            "settings": {
+              "navigation": {},
+              "contextPath": "/OpenItem"
+            }
+          }
+        },
+        "IngestionLogList": {
+          "type": "Component",
+          "id": "IngestionLogList",
+          "name": "sap.fe.templates.ListReport",
+          "controlAggregation": "beginColumnPages",
+          "options": {
+            "settings": {
+              "navigation": {},
+              "contextPath": "/IngestionLog"
+            }
+          }
         }
       }
-    }
+    },
+    "extends": {}
   }
 }
