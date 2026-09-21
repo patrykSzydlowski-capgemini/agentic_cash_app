@@ -19,6 +19,11 @@ import type { ExtractedPayment } from './extraction-agent.js';
 export interface ProposedMatchCandidate {
   openItemId: string;
   companyCode: string;
+  // Carried straight through from the matched open item so the approve()
+  // action has everything postClearing needs without a second read.
+  customerAccount: string;
+  amount: number;
+  currency: string;
   matchStatus: 'full' | 'probable' | 'toBeChecked' | 'noMatch';
   matchScore: number;
   rationale: string;
@@ -36,7 +41,11 @@ function referencesContainId(references: string[], openItemId: string): boolean 
 }
 
 function noMatchCandidate(rationale: string): ProposedMatchCandidate {
-  return { openItemId: '', companyCode: '', matchStatus: 'noMatch', matchScore: 0, rationale };
+  return { openItemId: '', companyCode: '', customerAccount: '', amount: 0, currency: '', matchStatus: 'noMatch', matchScore: 0, rationale };
+}
+
+function carriedFields(item: OpenItem): Pick<ProposedMatchCandidate, 'customerAccount' | 'amount' | 'currency'> {
+  return { customerAccount: item.customerAccount, amount: item.invoiceAmount, currency: item.invoiceAmountCurrency };
 }
 
 function scoreSingleReferencedItem(payment: ExtractedPayment, item: OpenItem): ProposedMatchCandidate {
@@ -46,6 +55,7 @@ function scoreSingleReferencedItem(payment: ExtractedPayment, item: OpenItem): P
     return {
       openItemId: item.openItemId,
       companyCode: item.companyCode,
+      ...carriedFields(item),
       matchStatus: 'toBeChecked',
       matchScore: 0.3,
       rationale: `Open item ${item.openItemId} is referenced in the payment, but its currency (${item.invoiceAmountCurrency}) differs from the payment's (${payment.currency}) — needs manual review.`,
@@ -56,6 +66,7 @@ function scoreSingleReferencedItem(payment: ExtractedPayment, item: OpenItem): P
     return {
       openItemId: item.openItemId,
       companyCode: item.companyCode,
+      ...carriedFields(item),
       matchStatus: 'full',
       matchScore: 1,
       rationale: `Open item ${item.openItemId} is referenced in the payment and its amount (${item.invoiceAmount.toFixed(2)} ${item.invoiceAmountCurrency}) matches the payment exactly.`,
@@ -67,6 +78,7 @@ function scoreSingleReferencedItem(payment: ExtractedPayment, item: OpenItem): P
     return {
       openItemId: item.openItemId,
       companyCode: item.companyCode,
+      ...carriedFields(item),
       matchStatus: 'toBeChecked',
       matchScore: 0.5,
       rationale: `Open item ${item.openItemId} is referenced in the payment, but the payment amount (${payment.amount.toFixed(2)} ${payment.currency}) is only ${pct}% of the open item's amount (${item.invoiceAmount.toFixed(2)} ${item.invoiceAmountCurrency}) — looks like a partial payment, not a full match.`,
@@ -76,6 +88,7 @@ function scoreSingleReferencedItem(payment: ExtractedPayment, item: OpenItem): P
   return {
     openItemId: item.openItemId,
     companyCode: item.companyCode,
+    ...carriedFields(item),
     matchStatus: 'toBeChecked',
     matchScore: 0.4,
     rationale: `Open item ${item.openItemId} is referenced in the payment, but the payment amount (${payment.amount.toFixed(2)} ${payment.currency}) exceeds the open item's amount (${item.invoiceAmount.toFixed(2)} ${item.invoiceAmountCurrency}) — needs manual review.`,
@@ -91,6 +104,7 @@ function scoreMultiItemReferenced(payment: ExtractedPayment, items: OpenItem[]):
     return items.map((item) => ({
       openItemId: item.openItemId,
       companyCode: item.companyCode,
+      ...carriedFields(item),
       matchStatus: 'full' as const,
       matchScore: 1,
       rationale: `Payment references multiple open items (${ids}) whose amounts sum to ${sum.toFixed(2)} ${payment.currency}, matching the payment amount exactly.`,
@@ -101,6 +115,7 @@ function scoreMultiItemReferenced(payment: ExtractedPayment, items: OpenItem[]):
   return items.map((item) => ({
     openItemId: item.openItemId,
     companyCode: item.companyCode,
+    ...carriedFields(item),
     matchStatus: 'toBeChecked' as const,
     matchScore: 0.4,
     rationale: `Payment references multiple open items (${ids}), but their amounts sum to ${sumDescription}, which does not match the payment amount of ${payment.amount.toFixed(2)} ${payment.currency} — needs manual review.`,
@@ -212,6 +227,7 @@ async function resolveByPayerFuzzyMatch(payment: ExtractedPayment, items: OpenIt
       return [{
         openItemId: item.openItemId,
         companyCode: item.companyCode,
+        ...carriedFields(item),
         matchStatus: 'probable',
         matchScore: 0.75,
         rationale: resolved.rationale,
@@ -222,6 +238,7 @@ async function resolveByPayerFuzzyMatch(payment: ExtractedPayment, items: OpenIt
   return candidateItems.map((item) => ({
     openItemId: item.openItemId,
     companyCode: item.companyCode,
+    ...carriedFields(item),
     matchStatus: 'toBeChecked' as const,
     matchScore: 0.35,
     rationale: resolved.rationale,
