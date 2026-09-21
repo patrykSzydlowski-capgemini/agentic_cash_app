@@ -6,7 +6,7 @@ export interface AIProvider {
 }
 
 export function providerName(): 'openrouter' | 'aicore' {
-    const name = process.env.CASH_AI_PROVIDER ?? 'openrouter'
+    const name = process.env.CASH_AI_PROVIDER ?? 'aicore'
     if (name !== 'openrouter' && name !== 'aicore') {
         throw new IntegrationUnavailableError('CASH_AI_PROVIDER must be openrouter or aicore.')
     }

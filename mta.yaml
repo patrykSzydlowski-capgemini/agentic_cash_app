@@ -25,7 +25,7 @@ modules:
       disk-quota: 512M
     properties:
       CASH_AI_ENABLED: true
-      CASH_AI_PROVIDER: openrouter
+      CASH_AI_PROVIDER: aicore
       CASH_AI_BINDING_NAME: poc-cash-ai
     requires:
       - name: poc-cash-uaa

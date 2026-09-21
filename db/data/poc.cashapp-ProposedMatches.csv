@@ -1,0 +1,3 @@
+ID,payment_ID,openItemId,companyCode,customerAccount,amount,currency,matchStatus,reviewStatus,matchScore,rationale,postingId,documentNumber,postingError
+MATCH-DEMO-01,PAY-DEMO-01,0123456789,1000,CUST-10,1000.00,EUR,full,posted,1.00,"Open item 0123456789 is referenced in the payment and its amount (1000.00 EUR) matches the payment exactly.",POST-0001,100000001,
+MATCH-DEMO-02,PAY-DEMO-02,OP-1001,1000,CUST-01,1500.00,USD,full,pending,1.00,"Open item OP-1001 is referenced in the payment and its amount (1500.00 USD) matches the payment exactly.",,,
