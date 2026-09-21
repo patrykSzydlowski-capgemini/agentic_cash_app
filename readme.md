@@ -33,10 +33,14 @@ integration.
 
 - `srv/agents/extraction-agent.ts` / `matching-agent.ts` — extraction and
   matching logic from ts-agentic-poc; AI calls are injectable for tests.
+- `srv/genai/orchestration-client.ts` — SAP AI Core / AI Hub Orchestration
+  client (**primary** AI path, `CASH_AI_PROVIDER=aicore`). Inert unless
+  `CASH_AI_ENABLED=true` with a service key or CF binding; otherwise it
+  throws `IntegrationUnavailableError` instead of silently mocking.
 - `srv/genai/openai-compatible-client.ts` — OpenAI-compatible chat client
   aimed at OpenRouter (any compatible endpoint via `OPENROUTER_BASE_URL`).
-  Inert unless `CASH_AI_ENABLED=true` with `OPENROUTER_API_KEY`; otherwise it
-  throws `IntegrationUnavailableError` instead of silently mocking. Default
+  **Unused alternative** (`CASH_AI_PROVIDER=openrouter`); same explicit-enable
+  contract as above. Default
   model is configurable with `OPENROUTER_MODEL`; verify current availability,
   PDF/file-input support and pricing in the OpenRouter catalog.
 - `srv/s4/open-items-client.ts` — destination-backed S/4 read adapter
@@ -50,11 +54,23 @@ integration.
   manual fixture runners against `test-fixtures/remittance-samples/`.
   `scripts/mail-read.ts` — IMAP mailbox diagnostic (needs a MAIL destination;
   review before pointing it at a real mailbox).
-- New unbound action `CashSyncService.processPaymentDocument(pdfBase64)`:
-  extracts (mock provider by default), matches against local open items, and
-  persists `poc.cashapp.Payments` + `ProposedMatches`, exposed as read-only
+- New unbound actions `CashSyncService.uploadPayment(fileName, fileContent)`
+  (UI-facing upload entry mirroring the reference workflow: raw PDF bytes in,
+  stored Payment row out) and `processPaymentDocument(pdfBase64)`:
+  extract (mock provider by default), match against local open items, and
+  persist `poc.cashapp.Payments` + `ProposedMatches`, exposed as read-only
   OData entities with UI annotations. Runnable against a running dev server
   with `npm run ai:process` (see the AI connection guide below).
+- `Payments` below extraction confidence 0.6 go straight to `needsReview`
+  with no candidates persisted (matching skipped on shaky data).
+- Bound `approve()` / `reject()` on `ProposedMatches`: approve posts clearing
+  via `postClearing` (SAP message severity ≥ 3 → stays `approved` with
+  `postingError`, else `posted`); without `CASH_S4_ENABLED=true` approve fails
+  honestly with 503 and no status change. Reject is a pure `rejected` flip.
+- UI: Fiori Elements LROP on `/Payments` (matching queue, Object Page with
+  payment details + proposed-matches facet), approve/reject buttons on
+  ProposedMatches rows, PDF upload via controller extension, legacy
+  `/MatchResult` list retained read-only.
 - `MatchResult` gained `confidence` and `review_reason`; `ingestAgentMatch`
   now persists both.
 
@@ -83,14 +99,15 @@ disposable in-memory databases and stop their server after the tests.
 
 По умолчанию используется явный локальный mock. Реальный провайдер включается
 только при `CASH_AI_ENABLED=true`. Провайдер выбирается `CASH_AI_PROVIDER`:
-`openrouter` (по умолчанию, OpenAI-совместимый клиент, нацеленный на
-OpenRouter) либо `aicore` (SAP AI Core / AI Hub Orchestration — оставлен
-переключаемой альтернативой). Ошибка выбранного live-провайдера никогда не
+`aicore` (по умолчанию — SAP AI Core / AI Hub Orchestration, основной путь)
+либо `openrouter` (OpenAI-совместимый клиент, нацеленный на OpenRouter —
+неиспользуемая альтернатива). Ошибка выбранного live-провайдера никогда не
 подменяется mock-результатом.
 
-### Быстрый старт: OpenRouter — вставить ключ и запустить
+### Быстрый старт: SAP AI Core / AI Hub — service key и запуск
 
-1. Создайте API-ключ на <https://openrouter.ai/keys>.
+1. Получите SAP AI Core service key по официальной инструкции
+   ([подключение SAP SDK](https://sap.github.io/ai-sdk/docs/js/connecting-to-ai-core)).
 2. В **корне репозитория** скопируйте шаблон и вставьте ключ в `.env`
    (файл игнорируется Git; ключ — только в этот файл, не в `.env.example`):
    ```sh
@@ -99,23 +116,22 @@ OpenRouter) либо `aicore` (SAP AI Core / AI Hub Orchestration — остав
    Затем откройте `.env` и приведите строки к виду:
    ```env
    CASH_AI_ENABLED=true
-   CASH_AI_PROVIDER=openrouter
-   OPENROUTER_API_KEY=sk-or-v1-ВАШ_КЛЮЧ
+   CASH_AI_PROVIDER=aicore
+   AICORE_MODEL=имя-доступной-модели
+   AICORE_RESOURCE_GROUP=default
+   AICORE_SERVICE_KEY='{"clientid":"...","clientsecret":"...","url":"...","serviceurls":{"AI_API_URL":"..."}}'
    ```
-   `OPENROUTER_MODEL` можно не указывать — по умолчанию берётся
-   `nvidia/nemotron-3-ultra-550b-a55b:free` (бесплатная модель из каталога
-   OpenRouter). Любую другую модель можно посмотреть в
-   [каталоге OpenRouter](https://openrouter.ai/models) и указать как
-   `OPENROUTER_MODEL=provider/model-id`. PDF OpenRouter принимает от любой
-   модели: если модель не умеет читать файлы сама, OpenRouter распарсит PDF
-   на своей стороне ([документация](https://openrouter.ai/docs/guides/overview/multimodal/pdfs)).
+   `AICORE_SERVICE_KEY` — полный JSON service key в одну строку. Не добавляйте
+   его в `.env.example`, Git, `mta.yaml` или MTAR. Вместо локального service key
+   можно использовать `cds bind`/hybrid profile. В Cloud Foundry предпочтительна
+   нативная привязка AI Core: SDK сам читает binding из `VCAP_SERVICES`.
 3. Запустите проект и проверьте подключение:
    ```sh
    npm run dev        # терминал 1 — сервер на http://localhost:4004
-   npm run ai:check   # терминал 2 — отправляет fixture PDF в OpenRouter
+   npm run ai:check   # терминал 2 — отправляет fixture PDF в AI Core
    npm run ai:process # терминал 2 — полный цикл: извлечение -> матчинг -> печать результатов
    ```
-   `ai:check` печатает `Live extraction via openrouter succeeded` при успехе.
+   `ai:check` печатает `Live extraction via aicore succeeded` при успехе.
    `ai:process` вызывает action `processPaymentDocument` на запущенном сервере
    и печатает извлечённый платёж и предложенные матч-результаты (результаты
    сохраняются в `Payments` / `ProposedMatches`). Другой PDF можно передать
@@ -123,6 +139,12 @@ OpenRouter) либо `aicore` (SAP AI Core / AI Hub Orchestration — остав
 4. Дальше обычная работа: `npm run dev` + UI на
    <http://localhost:4004>; данные кампании видны на
    `/odata/v4/cash-sync/Payments` и `/odata/v4/cash-sync/ProposedMatches`.
+   В приложении очередь допасований — список Payments; кнопка
+   **«Wgraj awizo (PDF)»** отправляет PDF в action `uploadPayment` (тот же
+   AI-pipeline), сохраняет платёж и предложенные матчи. Стартовые данные
+   (`db/data/poc.cash-OpenItem.csv`) содержат позицию `0123456789` из
+   fixture PDF — при live AI она матчится детерминированно
+   (1000.00 EUR).
 
 Обе проверки могут передать внешнему провайдеру содержимое документа и вызвать
 расходы по аккаунту; запускайте их только осознанно. Содержимое документа и
@@ -135,29 +157,30 @@ mock-результатам (нулевая уверенность, без ра�
 | Симптом | Причина | Что сделать |
 | --- | --- | --- |
 | 503 `AI is disabled` | `CASH_AI_ENABLED` не `true` | поставьте `true` в `.env`, перезапустите сервер |
-| 503 `OPENROUTER_API_KEY is missing` | ключ не вставлен / пустой `.env` | вставьте ключ в `.env` в корне репозитория |
-| `AI provider request failed (401)` / `(403)` | неверный или просроченный ключ | создайте новый ключ на openrouter.ai/keys |
+| 503 `AICORE_SERVICE_KEY is missing` | ключ не вставлен / пустой `.env` | вставьте service key в `.env` в корне репозитория |
+| `AI provider request failed (401)` / `(403)` | неверный или просроченный ключ | создайте новый service key |
 | ошибка 401/403 даже с новым ключом в `.env` | старый `OPENROUTER_API_KEY` экспортирован в терминале — переменные окружения имеют приоритет над `.env` | `unset OPENROUTER_API_KEY` (или откройте новый терминал) и перезапустите сервер |
 | `AI provider request failed (402)` | нет кредитов / исчерпана квота модели | пополните баланс или возьмите модель `:free` |
 | `AI provider request failed (404)` | модель недоступна | выберите другую в каталоге OpenRouter |
 | `Cannot reach http://localhost:4004` | сервер не запущен | сначала `npm run dev` |
 
-### Локально: SAP AI Core / AI Hub (опция)
+### Альтернатива: OpenRouter (не используется)
 
-Установите/привяжите SAP AI Core по официальной инструкции и укажите:
+Создайте API-ключ на <https://openrouter.ai/keys> и укажите:
 
 ```env
 CASH_AI_ENABLED=true
-CASH_AI_PROVIDER=aicore
-AICORE_MODEL=имя-доступной-модели
-AICORE_RESOURCE_GROUP=default
-AICORE_SERVICE_KEY='{"clientid":"...","clientsecret":"...","url":"...","serviceurls":{"AI_API_URL":"..."}}'
+CASH_AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-v1-ВАШ_КЛЮЧ
 ```
 
-`AICORE_SERVICE_KEY` — полный JSON service key в одну строку. Не добавляйте его
-в `.env.example`, Git, `mta.yaml` или MTAR. Вместо локального service key можно
-использовать `cds bind`/hybrid profile. В Cloud Foundry предпочтительна нативная
-привязка AI Core: SDK сам читает binding из `VCAP_SERVICES`.
+`OPENROUTER_MODEL` можно не указывать — по умолчанию берётся
+`nvidia/nemotron-3-ultra-550b-a55b:free` (бесплатная модель из каталога
+OpenRouter). Любую другую модель можно посмотреть в
+[каталоге OpenRouter](https://openrouter.ai/models) и указать как
+`OPENROUTER_MODEL=provider/model-id`. PDF OpenRouter принимает от любой
+модели: если модель не умеет читать файлы сама, OpenRouter распарсит PDF
+на своей стороне ([документация](https://openrouter.ai/docs/guides/overview/multimodal/pdfs)).
 
 ### Cloud Foundry: тот же OpenRouter key без ключа внутри MTAR
 

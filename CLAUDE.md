@@ -12,6 +12,17 @@ Integrated from AlexanderX/ts-agentic-poc (Apache-2.0, `LICENSE`; upstream docs 
 - `app/cashsync-ui`: Fiori Elements LROP on `/MatchResult`; annotations in `app/services.cds`.
 - `mta.yaml` / `xs-security.json` / `approuter/xs-app.json`: BTP scaffolding (build ok, deploy only on explicit approval). No HANA/HDI — SQLite-only.
 
+## Skills (project, `.claude/skills/`)
+
+- `fiori-elements` — invoke for ANY UI work in `app/*` (columns, filters, facets, actions, navigation, custom sections/columns/views, controller extensions). Annotation-first: Fiori Elements by default, customize via framework extensions when needed, freestyle UI5 only with written justification per the skill.
+- `skill-creator` — invoke when creating or improving a skill (SKILL.md format, validation via `scripts/validate-skill.sh`, scaffolding via `scripts/init-skill.sh`).
+
+## UI policy — Fiori Elements by default
+
+- All UI work in `app/*` uses SAP Fiori Elements (LROP/OOP, OData V4) driven by `UI.*` annotations. Default to annotations; customize through framework settings and extension points (Building Blocks → extensions → controller extensions).
+- Freestyle UI5 / custom pages are a downgrade (lose framework upgrades, personalization, draft handling, consistent UX) — allowed only after proving annotations + settings + extensions insufficient, with the justification stated in the reply.
+- Annotations live in `app/` (`app/services.cds` aggregating per-app files) — never scatter them into `srv/`.
+
 ## Git approval — mandatory, no exceptions
 
 - NEVER create a commit or push without the user's direct, explicit approval for that specific action and set of changes. A request to implement, fix, test, undo, or prepare changes is NOT permission to commit or push.
