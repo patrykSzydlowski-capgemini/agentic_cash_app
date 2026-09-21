@@ -72,7 +72,7 @@ test('metadata and seeded local entities are served', async () => {
     const metadata = await fetch(base + '/$metadata');
     assert.equal(metadata.status, 200);
     assert.match(await metadata.text(), /CashSyncService/);
-    assert.equal((await get('/OpenItem')).value.length, 3);
+    assert.equal((await get('/OpenItem')).value.length, 5);
     assert.equal((await get('/MatchResult')).value.length, 3);
 });
 
@@ -102,21 +102,54 @@ for (const confidence of [0.81, 0.8, 0.79]) {
     });
 }
 
-test('processPaymentDocument stores payment and proposed matches without live integrations', async () => {
+test('processPaymentDocument routes zero-confidence mock extraction to needsReview without matches', async () => {
     const paymentsBefore = (await get('/Payments')).value.length;
     const response = await post('/processPaymentDocument', { pdfBase64: Buffer.from('unused').toString('base64') });
-    assert.match((await response.json()).value, /Stored 1 proposed match/);
+    assert.match((await response.json()).value, /Stored 0 proposed match/);
 
     const payments = (await get('/Payments')).value;
     assert.equal(payments.length, paymentsBefore + 1);
-    const payment = payments.at(-1);
-    assert.match(payment.payer, /\[MOCK\]/);
+    const payment = payments.filter(p => String(p.payer).includes('[MOCK]')).at(-1);
+    assert.ok(payment, 'expected a mock payment row');
     assert.equal(Number(payment.extractionConfidence), 0);
-    assert.equal(payment.status, 'extracted');
+    // Mock confidence 0 < LOW_CONFIDENCE_THRESHOLD (0.6): matching is skipped,
+    // the payment goes straight to needsReview with no candidates persisted.
+    assert.equal(payment.status, 'needsReview');
 
     const matches = await get(`/Payments('${payment.ID}')/matches`);
-    assert.equal(matches.value.length, 1);
-    assert.equal(matches.value[0].matchStatus, 'noMatch');
-    assert.match(matches.value[0].rationale, /\[MOCK\]/);
-    assert.equal(matches.value[0].reviewStatus, 'pending');
+    assert.equal(matches.value.length, 0);
+});
+
+async function postRaw(path: string, payload: object) {
+    return fetch(base + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+}
+
+test('uploadPayment stores the payment on fixture data (mock confidence routes to needsReview)', async () => {
+    const paymentsBefore = (await get('/Payments')).value.length;
+    const response = await post('/uploadPayment', {
+        fileName: 'mock-remittance.pdf',
+        fileContent: Buffer.from('unused').toString('base64'),
+    });
+    const stored = await response.json();
+    assert.match(stored.payer, /MOCK|Test payer/);
+    // Mock extraction confidence 0 < 0.6: matching skipped, no candidates.
+    assert.equal(stored.status, 'needsReview');
+
+    const payments = (await get('/Payments')).value;
+    assert.equal(payments.length, paymentsBefore + 1);
+
+    const matches = await get(`/Payments('${stored.ID}')/matches`);
+    assert.equal(matches.value.length, 0);
+});
+
+test('uploadPayment rejects wrong-typed content at the OData layer (400)', async () => {
+    // Edm.Binary validation fires before the handler: a JSON number never
+    // reaches decodeFileContent, so the 400 comes from the OData layer.
+    const response = await postRaw('/uploadPayment', { fileName: 'bad.pdf', fileContent: 42 });
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /not a valid LargeBinary/);
 });

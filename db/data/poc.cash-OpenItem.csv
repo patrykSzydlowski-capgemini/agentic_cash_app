@@ -1,4 +1,6 @@
-OpenItemId,CustomerName,CustomerAccount,InvoiceAmount,ClearingStatus
-OP-1001,ACME Corp,CUST-01,1500.00,OPEN
-OP-1002,Global Logistics,CUST-02,2450.50,OPEN
-OP-1003,TechSupplies,CUST-03,890.00,OPEN
+OpenItemId,CompanyCode,CustomerAccount,CustomerName,InvoiceAmount,InvoiceAmountCurr,ClearingStatus,PostingDate,DocumentDate
+0123456789,1000,CUST-10,Customer1 Manufacturing Ltd.,1000.00,EUR,OPEN,2026-01-01,2026-01-01
+OP-1001,1000,CUST-01,ACME Corp,1500.00,USD,OPEN,2026-01-15,2026-01-10
+OP-1002,1000,CUST-02,Global Logistics,2450.50,USD,OPEN,2026-01-20,2026-01-18
+OP-1003,1000,CUST-03,TechSupplies,890.00,USD,OPEN,2026-02-05,2026-02-02
+OP-1004,1000,CUST-04,Retail Partners,1200.00,USD,OPEN,2026-02-08,2026-02-06

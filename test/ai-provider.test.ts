@@ -31,9 +31,9 @@ test('OpenRouter credential is read only from the explicitly named CF binding', 
     assert.equal(openRouterKey(env), 'right')
 })
 
-test('provider defaults to OpenRouter and rejects unknown values', () => {
+test('provider defaults to SAP AI Core and rejects unknown values', () => {
     delete process.env.CASH_AI_PROVIDER
-    assert.equal(providerName(), 'openrouter')
+    assert.equal(providerName(), 'aicore')
     process.env.CASH_AI_PROVIDER = 'unknown'
     assert.throws(() => providerName(), /openrouter or aicore/)
 })
