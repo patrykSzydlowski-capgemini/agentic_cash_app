@@ -19,6 +19,7 @@ import { postClearing, type SapMessage } from './s4/clearing-client.js'
 export const LOW_CONFIDENCE_THRESHOLD = 0.6
 
 const { INSERT, UPDATE, SELECT, UPSERT } = cds.ql
+const LOG = cds.log('cash-service')
 type ProcessPaymentDocumentPayload = Parameters<typeof processPaymentDocument>[0]
 type IngestAgentMatchPayload = Parameters<typeof ingestAgentMatch>[0]
 
@@ -377,7 +378,7 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         const apiKey = process.env.GEMINI_API_KEY
 
         if (!apiKey) {
-            console.warn('No API key in environment. Using simulation...')
+            LOG.warn('No API key in environment. Using simulation...')
             const isAmbiguous = Math.random() > 0.5
             return {
                 confidence: isAmbiguous ? 0.60 : 0.98,
@@ -424,7 +425,7 @@ Return a JSON object with this exact schema:
             const jsonText = response.data.candidates[0].content.parts[0].text
             return JSON.parse(jsonText) as AgentResponse
         } catch (error: any) {
-            console.error('API call error:', error.response?.data || error.message)
+            LOG.error('API call error:', error.response?.data || error.message)
             return {
                 confidence: 0.0,
                 review_required: true,

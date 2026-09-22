@@ -1,3 +1,5 @@
+import cds from '@sap/cds'
+
 export class IntegrationUnavailableError extends Error {
     readonly statusCode = 503
 }
@@ -11,7 +13,19 @@ export function requireAIEnabled(): void {
 export function openRouterKey(env: NodeJS.ProcessEnv = process.env): string {
     const direct = env.OPENROUTER_API_KEY?.trim()
     if (direct) return direct
+
     const name = env.CASH_AI_BINDING_NAME?.trim() || 'poc-cash-ai'
+
+    // 1. CAP-managed service binding (auto-injected from VCAP_SERVICES or cds bind)
+    if (env === process.env) {
+        const capBinding = (cds.env?.requires as Record<string, any> | undefined)?.[name]
+        const capKey = capBinding?.credentials?.OPENROUTER_API_KEY
+        if (typeof capKey === 'string' && capKey.trim()) {
+            return capKey.trim()
+        }
+    }
+
+    // 2. Direct VCAP_SERVICES parsing (supports isolated test environments and non-CAP executions)
     let services: unknown
     try {
         services = JSON.parse(env.VCAP_SERVICES || '{}')

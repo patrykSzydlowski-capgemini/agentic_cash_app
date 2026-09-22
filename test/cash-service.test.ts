@@ -109,7 +109,7 @@ test('processPaymentDocument routes zero-confidence mock extraction to needsRevi
 
     const payments = (await get('/Payments')).value;
     assert.equal(payments.length, paymentsBefore + 1);
-    const payment = payments.filter(p => String(p.payer).includes('[MOCK]')).at(-1);
+    const payment = payments.filter((p: any) => String(p.payer).includes('[MOCK]')).at(-1);
     assert.ok(payment, 'expected a mock payment row');
     assert.equal(Number(payment.extractionConfidence), 0);
     // Mock confidence 0 < LOW_CONFIDENCE_THRESHOLD (0.6): matching is skipped,

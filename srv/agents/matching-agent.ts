@@ -12,6 +12,7 @@
 // generated directly from the deterministic reasoning — no LLM round trip
 // needed to explain an exact-amount, exact-reference match.
 
+import { z } from 'zod';
 import { generateText } from '../genai/index.js';
 import type { OpenItem } from '../s4/open-items-client.js';
 import type { ExtractedPayment } from './extraction-agent.js';
@@ -142,18 +143,14 @@ function stripCodeFence(text: string): string {
   return fenced ? fenced[1] : text.trim();
 }
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0;
-}
+const PayerResolutionSchema = z.object({
+  matchedCustomerAccounts: z.array(z.string(), {
+    message: 'Payer resolution result: matchedCustomerAccounts must be an array of strings.',
+  }),
+  rationale: z.string().trim().min(1, 'Payer resolution result: rationale must be a non-empty string.'),
+});
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string');
-}
-
-interface PayerResolution {
-  matchedCustomerAccounts: string[];
-  rationale: string;
-}
+type PayerResolution = z.infer<typeof PayerResolutionSchema>;
 
 function buildPayerResolutionPrompt(payer: string, candidates: CustomerCandidate[]): string {
   const candidateList = candidates.map((c) => `- ${c.customerAccount}: "${c.customerName}"`).join('\n');
@@ -188,20 +185,18 @@ function parsePayerResolution(raw: string, validAccounts: Set<string>): PayerRes
     throw new Error('Payer resolution result is not a JSON object.');
   }
 
-  const candidate = parsed as Record<string, unknown>;
-
-  if (!isStringArray(candidate.matchedCustomerAccounts)) {
-    throw new Error('Payer resolution result: matchedCustomerAccounts must be an array of strings.');
+  const result = PayerResolutionSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error(result.error.issues[0]?.message ?? 'Invalid payer resolution result.');
   }
+
+  const candidate = result.data;
   const unknownAccounts = candidate.matchedCustomerAccounts.filter((account) => !validAccounts.has(account));
   if (unknownAccounts.length > 0) {
     throw new Error(`Payer resolution result referenced unknown customer account(s): ${unknownAccounts.join(', ')}`);
   }
-  if (!isNonEmptyString(candidate.rationale)) {
-    throw new Error('Payer resolution result: rationale must be a non-empty string.');
-  }
 
-  return { matchedCustomerAccounts: candidate.matchedCustomerAccounts, rationale: candidate.rationale };
+  return candidate;
 }
 
 async function resolveByPayerFuzzyMatch(payment: ExtractedPayment, items: OpenItem[], complete: typeof generateText): Promise<ProposedMatchCandidate[]> {

@@ -1,5 +1,5 @@
 import { getDestination } from '@sap-cloud-sdk/connectivity';
-import Imap from 'imap';
+import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -13,7 +13,7 @@ function loadLocalVcapServices(): void {
   if (process.env.VCAP_SERVICES) {
     return; // already set (e.g. real Cloud Foundry runtime)
   }
-  const envFile = path.join(__dirname, 'default-env.json');
+  const envFile = path.resolve('default-env.json');
   if (!fs.existsSync(envFile)) {
     return;
   }
@@ -90,71 +90,48 @@ async function loadMailDestination(destinationName: string): Promise<MailDestina
 
 /**
  * Connects via IMAP and prints the subject/sender/attachments
- * of unread messages in INBOX. Adjust the search criteria and
- * box name for your real remittance-advice mailbox/folder.
+ * of unread messages in INBOX using modern ImapFlow client.
  */
-function fetchUnreadMessages(config: MailDestinationProps): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // WARNING: setting IMAP_ALLOW_INSECURE_TLS=true disables certificate
-    // verification. Only use this temporarily behind a trusted corporate
-    // proxy for local debugging - never in production. Prefer setting
-    // NODE_EXTRA_CA_CERTS to the corporate root CA instead.
-    const allowInsecureTls = process.env.IMAP_ALLOW_INSECURE_TLS === 'true';
-    if (allowInsecureTls) {
-      console.warn('WARNING: TLS certificate verification is disabled (IMAP_ALLOW_INSECURE_TLS=true).');
-    }
+async function fetchUnreadMessages(config: MailDestinationProps): Promise<void> {
+  const allowInsecureTls = process.env.IMAP_ALLOW_INSECURE_TLS === 'true';
+  if (allowInsecureTls) {
+    console.warn('WARNING: TLS certificate verification is disabled (IMAP_ALLOW_INSECURE_TLS=true).');
+  }
 
-    const imap = new Imap({
+  const client = new ImapFlow({
+    host: config.host,
+    port: config.port,
+    secure: config.useSsl,
+    auth: {
       user: config.user,
-      password: config.password,
-      host: config.host,
-      port: config.port,
-      tls: config.useSsl,
-      tlsOptions: allowInsecureTls ? { rejectUnauthorized: false } : undefined
-    });
-
-    imap.once('ready', () => {
-      imap.openBox('INBOX', false, (err) => {
-        if (err) return reject(err);
-
-        imap.search(['UNSEEN'], (searchErr, results) => {
-          if (searchErr) return reject(searchErr);
-
-          if (!results || results.length === 0) {
-            console.log('No unread messages found.');
-            imap.end();
-            return resolve();
-          }
-
-          const fetcher = imap.fetch(results, { bodies: '', markSeen: false });
-
-          fetcher.on('message', (msg, seqno) => {
-            msg.on('body', (stream) => {
-              simpleParser(stream as any, (parseErr, parsed) => {
-                if (parseErr) {
-                  console.error(`Failed to parse message #${seqno}:`, parseErr);
-                  return;
-                }
-                console.log(`--- Message #${seqno} ---`);
-                console.log('From:', parsed.from?.text);
-                console.log('Subject:', parsed.subject);
-                console.log('Attachments:', parsed.attachments.map(a => a.filename));
-              });
-            });
-          });
-
-          fetcher.once('error', (fetchErr) => reject(fetchErr));
-          fetcher.once('end', () => {
-            imap.end();
-            resolve();
-          });
-        });
-      });
-    });
-
-    imap.once('error', (err: Error) => reject(err));
-    imap.connect();
+      pass: config.password,
+    },
+    tls: allowInsecureTls ? { rejectUnauthorized: false } : undefined,
+    logger: false,
   });
+
+  await client.connect();
+
+  const lock = await client.getMailboxLock('INBOX');
+  try {
+    let count = 0;
+    for await (const message of client.fetch({ seen: false }, { source: true })) {
+      count++;
+      if (message.source) {
+        const parsed = await simpleParser(message.source);
+        console.log(`--- Message #${count} ---`);
+        console.log('From:', parsed.from?.text);
+        console.log('Subject:', parsed.subject);
+        console.log('Attachments:', parsed.attachments.map((a) => a.filename));
+      }
+    }
+    if (count === 0) {
+      console.log('No unread messages found.');
+    }
+  } finally {
+    lock.release();
+    await client.logout();
+  }
 }
 
 async function main() {

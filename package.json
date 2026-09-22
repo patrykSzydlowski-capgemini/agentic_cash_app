@@ -12,15 +12,16 @@
     "@sap/cds": "^10.1.0",
     "axios": "^1.20.0",
     "express": "^4",
-    "imap": "^0.8.19",
+    "imapflow": "^2.0.5",
     "mailparser": "^3.9.28",
-    "npx": "^10.2.2"
+    "npx": "^10.2.2",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@cap-js/cds-typer": "^0.41.1",
     "@cap-js/cds-types": "^0.19.0",
     "@sap/cds-dk": "^10.1.1",
-    "@types/imap": "^0.8.43",
+    "@types/imapflow": "^1.0.23",
     "@types/mailparser": "^3.4.6",
     "@types/node": "^24.13.5",
     "tsx": "^4.23.13",
@@ -48,6 +49,20 @@
     "requires": {
       "db": {
         "kind": "sqlite"
+      },
+      "poc-cash-ai": {
+        "kind": "user-provided",
+        "vcap": {
+          "name": "poc-cash-ai"
+        }
+      },
+      "ZAC_OPENITEMS_MOC_O4": {
+        "kind": "odata-v4",
+        "model": "srv/external/ZAC_OPENITEMS_MOC_O4",
+        "credentials": {
+          "destination": "HD0_BAS",
+          "path": "/sap/opu/odata4/sap/zac_openitems_moc_o4/srvd_a2x/sap/zac_openitems_moc/0001"
+        }
       }
     },
     "build": {

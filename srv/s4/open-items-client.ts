@@ -1,5 +1,7 @@
 // Adapted from AlexanderX/ts-agentic-poc (Apache-2.0).
-// Destination-backed S/4 read adapter; local data uses the same mapper.
+// Destination-backed S/4 read adapter via CAP remote service (ZAC_OPENITEMS_MOC_O4).
+
+import cds from '@sap/cds';
 
 export interface OpenItem {
   openItemId: string;
@@ -25,8 +27,8 @@ export function toOpenItem(raw: Record<string, unknown>): OpenItem {
   }
   return {
     openItemId: raw.OpenItemId as string,
-    postingDate: raw.PostingDate as string | null,
-    documentDate: raw.DocumentDate as string | null,
+    postingDate: (raw.PostingDate as string | null) ?? null,
+    documentDate: (raw.DocumentDate as string | null) ?? null,
     companyCode: raw.CompanyCode as string,
     customerAccount: raw.CustomerAccount as string,
     customerName: raw.CustomerName as string,
@@ -37,21 +39,30 @@ export function toOpenItem(raw: Record<string, unknown>): OpenItem {
 }
 
 export async function getOpenItems(customerAccount?: string, companyCode?: string): Promise<OpenItem[]> {
-  if (process.env.CASH_S4_ENABLED !== 'true') throw new Error('S/4 access is disabled. Set CASH_S4_ENABLED=true only after configuring the destination.');
-  const { executeHttpRequest } = await import('@sap-cloud-sdk/http-client');
-  const filters: string[] = [];
-  const literal = (value: string) => `'${value.replace(/'/g, "''")}'`;
-  if (customerAccount) filters.push(`CustomerAccount eq ${literal(customerAccount)}`);
-  if (companyCode) filters.push(`CompanyCode eq ${literal(companyCode)}`);
-  const path = '/sap/opu/odata4/sap/zac_openitems_moc_o4/srvd_a2x/sap/zac_openitems_moc/0001/zac_openitems_moc';
-  const query = filters.length ? `?$filter=${encodeURIComponent(filters.join(' and '))}` : '';
-  const response = await executeHttpRequest(
-    { destinationName: process.env.S4_DESTINATION_NAME ?? 'HD0_BAS' },
-    { method: 'get', url: path + query, headers: { Accept: 'application/json' }, timeout: 30000 },
-  );
-  const data = response.data as { value?: Record<string, unknown>[]; '@odata.nextLink'?: string };
-  if (!Array.isArray(data.value)) throw new Error('Invalid S/4 open-items response.');
-  // Never silently match against an incomplete candidate set.
-  if (data['@odata.nextLink']) throw new Error('S/4 result is paginated; narrow the customer/company filter before matching.');
-  return data.value.map(toOpenItem);
+  if (process.env.CASH_S4_ENABLED !== 'true') {
+    throw new Error('S/4 access is disabled. Set CASH_S4_ENABLED=true only after configuring the destination.');
+  }
+
+  const s4 = await cds.connect.to('ZAC_OPENITEMS_MOC_O4');
+  const query = cds.ql.SELECT.from('ZAC_OPENITEMS_MOC_O4.zac_openitems_moc');
+  const conditions: Record<string, unknown> = {};
+  if (customerAccount) conditions.CustomerAccount = customerAccount;
+  if (companyCode) conditions.CompanyCode = companyCode;
+
+  if (Object.keys(conditions).length > 0) {
+    query.where(conditions);
+  }
+
+  const response = await s4.run(query);
+  const items = Array.isArray(response) ? response : (response as { value?: Record<string, unknown>[] })?.value;
+  if (!Array.isArray(items)) {
+    throw new Error('Invalid S/4 open-items response.');
+  }
+
+  // Never silently match against an incomplete candidate set
+  if ((response as Record<string, unknown>)?.['@odata.nextLink']) {
+    throw new Error('S/4 result is paginated; narrow the customer/company filter before matching.');
+  }
+
+  return items.map((item: Record<string, unknown>) => toOpenItem(item));
 }

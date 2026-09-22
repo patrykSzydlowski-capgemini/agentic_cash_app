@@ -2,16 +2,64 @@
 // PDF and returns structured payment data. Does not look at open items or
 // make matching decisions (that's Agent 3, srv/agents/matching-agent.ts).
 
+import { z } from 'zod';
 import { extractDocument } from '../genai/index.js';
 
-export interface ExtractedPayment {
-  payer: string;
-  amount: number;
-  currency: string;
-  valueDate: string;
-  references: string[];
-  extractionConfidence: number;
+function normalizeValueDate(value: string): string | null {
+  const trimmed = value.trim();
+
+  // ISO 8601 (YYYY-MM-DD)
+  const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const [, year, month, day] = iso;
+    const d = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+    if (d.getUTCFullYear() === Number(year) && d.getUTCMonth() === Number(month) - 1 && d.getUTCDate() === Number(day)) {
+      return trimmed;
+    }
+    return null;
+  }
+
+  // DD.MM.YYYY
+  const dotted = trimmed.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (dotted) {
+    const [, day, month, year] = dotted;
+    const d = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+    if (d.getUTCFullYear() === Number(year) && d.getUTCMonth() === Number(month) - 1 && d.getUTCDate() === Number(day)) {
+      return `${year}-${month}-${day}`;
+    }
+    return null;
+  }
+
+  // DD Mon YYYY (e.g. 15 Jan 2026)
+  const ts = Date.parse(trimmed);
+  if (!Number.isNaN(ts)) {
+    const d = new Date(ts);
+    return d.toISOString().slice(0, 10);
+  }
+
+  return null;
 }
+
+export const ExtractedPaymentSchema = z.object({
+  payer: z.string().trim().min(1, 'payer must be a non-empty string'),
+  amount: z.number().finite('amount must be a finite number'),
+  currency: z.string().regex(/^[A-Z]{3}$/, 'currency must be a 3-letter ISO 4217 code'),
+  valueDate: z.string().transform((val, ctx) => {
+    const normalized = normalizeValueDate(val);
+    if (!normalized) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'valueDate must be a valid date in ISO 8601 (YYYY-MM-DD), "DD Mon YYYY", or "DD.MM.YYYY" format',
+      });
+      return z.NEVER;
+    }
+    return normalized;
+  }),
+  references: z.array(z.string()),
+  extractionConfidence: z.number().min(0, 'extractionConfidence must be a number between 0 and 1').max(1, 'extractionConfidence must be a number between 0 and 1'),
+});
+
+export type ExtractedPayment = z.infer<typeof ExtractedPaymentSchema>;
 
 const EXTRACTION_PROMPT = `You are extracting structured payment data from a remittance advice, wire transfer confirmation, or check stub PDF.
 
@@ -33,95 +81,18 @@ function stripCodeFence(text: string): string {
   return fenced ? fenced[1] : text.trim();
 }
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string');
-}
-
-const MONTH_ABBREVIATIONS: Record<string, string> = {
-  jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
-  jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
-};
-
-function isValidCalendarDate(year: number, month: number, day: number): boolean {
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
-}
-
-// Accepts the three formats the prompt allows the model to return
-// (ISO 8601, "DD Mon YYYY", "DD.MM.YYYY") and normalizes to ISO 8601
-// (YYYY-MM-DD) so every consumer downstream sees one consistent shape.
-function normalizeValueDate(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-
-  const iso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (iso) {
-    const [, year, month, day] = iso;
-    return isValidCalendarDate(Number(year), Number(month), Number(day)) ? trimmed : null;
-  }
-
-  const dotted = trimmed.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-  if (dotted) {
-    const [, day, month, year] = dotted;
-    return isValidCalendarDate(Number(year), Number(month), Number(day)) ? `${year}-${month}-${day}` : null;
-  }
-
-  const withMonthName = trimmed.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})$/);
-  if (withMonthName) {
-    const [, day, monthName, year] = withMonthName;
-    const month = MONTH_ABBREVIATIONS[monthName.slice(0, 3).toLowerCase()];
-    if (!month) return null;
-    const paddedDay = day.padStart(2, '0');
-    return isValidCalendarDate(Number(year), Number(month), Number(paddedDay))
-      ? `${year}-${month}-${paddedDay}`
-      : null;
-  }
-
-  return null;
-}
-
 function validate(parsed: unknown): ExtractedPayment {
   if (typeof parsed !== 'object' || parsed === null) {
     throw new Error('Extraction result is not a JSON object.');
   }
 
-  const candidate = parsed as Record<string, unknown>;
-  const errors: string[] = [];
-
-  if (!isNonEmptyString(candidate.payer)) errors.push('payer must be a non-empty string');
-  if (!isFiniteNumber(candidate.amount)) errors.push('amount must be a finite number');
-  if (!(typeof candidate.currency === 'string' && /^[A-Z]{3}$/.test(candidate.currency))) {
-    errors.push('currency must be a 3-letter ISO 4217 code');
-  }
-  const normalizedValueDate = normalizeValueDate(candidate.valueDate);
-  if (normalizedValueDate === null) {
-    errors.push('valueDate must be a valid date in ISO 8601 (YYYY-MM-DD), "DD Mon YYYY", or "DD.MM.YYYY" format');
-  }
-  if (!isStringArray(candidate.references)) errors.push('references must be an array of strings');
-  if (!(isFiniteNumber(candidate.extractionConfidence) && candidate.extractionConfidence >= 0 && candidate.extractionConfidence <= 1)) {
-    errors.push('extractionConfidence must be a number between 0 and 1');
+  const result = ExtractedPaymentSchema.safeParse(parsed);
+  if (!result.success) {
+    const errorDetails = result.error.issues.map((i) => i.message).join('; ');
+    throw new Error(`Extraction result failed validation: ${errorDetails}`);
   }
 
-  if (errors.length > 0) {
-    throw new Error(`Extraction result failed validation: ${errors.join('; ')}`);
-  }
-
-  return {
-    payer: candidate.payer as string,
-    amount: candidate.amount as number,
-    currency: candidate.currency as string,
-    valueDate: normalizedValueDate as string,
-    references: candidate.references as string[],
-    extractionConfidence: candidate.extractionConfidence as number,
-  };
+  return result.data;
 }
 
 export async function extractPayment(
