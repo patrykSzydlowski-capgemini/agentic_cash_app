@@ -10,7 +10,7 @@ import { proposeMatches } from './agents/matching-agent.js'
 import type { ProposedMatchCandidate } from './agents/matching-agent.js'
 import type { OpenItem } from './s4/open-items-client.js'
 import { getOpenItems as getLiveOpenItems } from './s4/open-items-client.js'
-import { postClearing, type SapMessage } from './s4/clearing-client.js'
+import { postClearing, type SapMessage, type ClearingResult } from './s4/clearing-client.js'
 import { activeModelName } from './genai/index.js'
 
 if (!process.env.VCAP_SERVICES) {
@@ -571,6 +571,90 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             return SELECT.one.from(Payments, ID)
         })
 
+        // Operator action: manually posts a validated payment to S/4HANA clearing.
+        this.on('postToS4', 'Payments', async (req: Request) => {
+            const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
+            const [{ ID }] = req.params as [{ ID: string }]
+            const payment = await SELECT.one.from(Payments, ID)
+            if (!payment) return req.error(404, `Payment ${ID} not found.`)
+
+            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+            LOG.info(`🏦 [Manual Post] Operator triggered S/4HANA posting for payment ${ID} (${payment.payer}, ${payment.amount} ${payment.currency})`)
+
+            if (payment.status === 'cleared') {
+                return req.error(400, `Płatność dla ${payment.payer} została już wcześniej zaksięgowana w S/4HANA.`)
+            }
+
+            const matches = await SELECT.from(ProposedMatches).where({ payment_ID: ID })
+            const validMatch = matches.find((m: any) => m.openItemId && m.openItemId !== '(brak dopasowania)' && m.openItemId !== '')
+
+            if (!validMatch) {
+                LOG.warn(`[Manual Post] No valid open item associated with payment ${ID}.`)
+                return req.error(400, `Płatność (${payment.payer}) nie posiada powiązanej otwartej pozycji w SAP. Dopasuj pozycję przed zaksięgowaniem.`)
+            }
+
+            if (process.env.CASH_S4_ENABLED !== 'true') {
+                LOG.warn(`[S/4 Clearing] S/4 posting is disabled (CASH_S4_ENABLED !== 'true').`)
+                return req.error(503, 'Księgowanie w S/4HANA jest wyłączone. Ustaw CASH_S4_ENABLED=true tylko za zgodą.')
+            }
+
+            LOG.info(`🏦 [S/4 Clearing] Posting clearance document to S/4HANA for open item ${validMatch.openItemId} (${validMatch.customerAccount}, ${validMatch.amount} ${validMatch.currency})...`)
+            let result: ClearingResult
+            try {
+                const [clearingResult] = await postClearing([{
+                    openItemId: validMatch.openItemId,
+                    companyCode: validMatch.companyCode || '1000',
+                    amount: Number(validMatch.amount || payment.amount),
+                    currency: validMatch.currency || payment.currency,
+                    customer: validMatch.customerAccount || '',
+                }])
+                result = clearingResult
+            } catch (networkErr: any) {
+                const errorMsg = networkErr?.message || String(networkErr)
+                LOG.error(`❌ [S/4 Clearing] S/4HANA Destination/Connectivity error: ${errorMsg}`)
+                await UPDATE.entity(ProposedMatches, validMatch.ID).with({
+                    reviewStatus: 'approved',
+                    postingId: null,
+                    documentNumber: null,
+                    postingError: errorMsg,
+                })
+                return req.error(502, `Błąd połączenia z S/4HANA: ${errorMsg}`)
+            }
+
+            const SAP_FAIL_SEVERITY = 3
+            const failed = result.sapMessages.some((m: SapMessage) => m.numericSeverity >= SAP_FAIL_SEVERITY)
+
+            if (failed) {
+                const errorMsg = result.sapMessages.map((m: SapMessage) => `[${m.code}] ${m.message}`).join('; ')
+                    || 'Posting failed with no SAP message detail.'
+                LOG.error(`❌ [S/4 Clearing] Posting failed: ${errorMsg}`)
+                await UPDATE.entity(ProposedMatches, validMatch.ID).with({
+                    reviewStatus: 'approved',
+                    postingId: null,
+                    documentNumber: null,
+                    postingError: errorMsg,
+                })
+                return req.error(502, `Błąd księgowania w S/4HANA: ${errorMsg}`)
+            }
+
+            LOG.info(`✅ [S/4 Clearing] Posting succeeded! DocumentNumber: ${result.documentNumber}, PostingId: ${result.postingId}`)
+            await UPDATE.entity(ProposedMatches, validMatch.ID).with({
+                reviewStatus: 'posted',
+                postingId: result.postingId,
+                documentNumber: result.documentNumber,
+                postingError: null,
+            })
+
+            await UPDATE.entity(Payments, ID).with({
+                status: 'cleared',
+            })
+
+            LOG.info(`✅ [Manual Post] Payment ${ID} status updated to "cleared"`)
+            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+            req.notify(`Płatność (${payment.payer}) została pomyślnie zaksięgowana w S/4HANA. Nr dokumentu: ${result.documentNumber}`)
+            return SELECT.one.from(Payments, ID)
+        })
+
         // Open Items browser: live S/4 read when enabled, honest 503 otherwise.
         // An empty/omitted customerAccount fetches the whole set.
         this.on('getOpenItems', async (req: Request) => {
@@ -641,6 +725,10 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                     documentNumber: result.documentNumber,
                     postingError: null,
                 })
+                if (match.payment_ID) {
+                    const { Payments } = cds.entities('poc.cashapp')
+                    await UPDATE.entity(Payments, match.payment_ID).with({ status: 'cleared' })
+                }
             }
 
             return SELECT.one.from(ProposedMatches, ID)

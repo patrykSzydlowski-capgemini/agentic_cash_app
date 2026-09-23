@@ -36,6 +36,7 @@ service CashSyncService {
         end as StatusCriticality : Integer
     } actions {
         action reprocessWithAI() returns Payments;
+        action postToS4()         returns Payments;
     };
     entity ProposedMatches as projection on app.ProposedMatches {
         *,

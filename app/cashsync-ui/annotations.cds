@@ -14,7 +14,24 @@ annotate service.Payments with @(
     UI.SelectionFields : [
         status
     ],
+    UI.Identification : [
+        {
+            $Type  : 'UI.DataFieldForAction',
+            Action : 'CashSyncService.postToS4',
+            Label  : 'Zaksięguj w S/4HANA'
+        },
+        {
+            $Type  : 'UI.DataFieldForAction',
+            Action : 'CashSyncService.reprocessWithAI',
+            Label  : 'Rewaliduj z AI'
+        }
+    ],
     UI.LineItem : [
+        {
+            $Type  : 'UI.DataFieldForAction',
+            Action : 'CashSyncService.postToS4',
+            Label  : 'Zaksięguj w S/4HANA'
+        },
         {
             $Type  : 'UI.DataFieldForAction',
             Action : 'CashSyncService.reprocessWithAI',
@@ -235,6 +252,45 @@ annotate service.Payments actions {
             ],
             TargetEntities : [
                 'matches'
+            ]
+        }
+    );
+    postToS4 @(
+        Common.SideEffects : {
+            TargetProperties : [
+                'status',
+                'StatusCriticality'
+            ],
+            TargetEntities : [
+                'matches'
+            ]
+        }
+    );
+};
+
+annotate service.ProposedMatches actions {
+    approveMatch @(
+        Common.SideEffects : {
+            TargetProperties : [
+                'reviewStatus',
+                'ReviewCriticality',
+                'postingId',
+                'documentNumber',
+                'postingError'
+            ],
+            TargetEntities : [
+                'payment'
+            ]
+        }
+    );
+    rejectMatch @(
+        Common.SideEffects : {
+            TargetProperties : [
+                'reviewStatus',
+                'ReviewCriticality'
+            ],
+            TargetEntities : [
+                'payment'
             ]
         }
     );

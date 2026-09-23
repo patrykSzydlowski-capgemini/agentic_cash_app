@@ -175,3 +175,20 @@ test('reprocessWithAI triggers matching agent on selected payment and updates st
     assert.equal(Number(updated.extractionConfidence), 0.95);
 });
 
+test('postToS4 rejects payment with no matching open item (400)', async () => {
+    const id = '00000001-0000-0000-0000-000000000003';
+    const response = await postRaw(`/Payments('${id}')/CashSyncService.postToS4`, {});
+    assert.equal(response.status, 400);
+    const body = await response.text();
+    assert.match(body, /nie posiada powiązanej otwartej pozycji w SAP/);
+});
+
+test('postToS4 returns 503 when CASH_S4_ENABLED is false', async () => {
+    const id = '00000001-0000-0000-0000-000000000002';
+    const response = await postRaw(`/Payments('${id}')/CashSyncService.postToS4`, {});
+    assert.equal(response.status, 503);
+    const body = await response.text();
+    assert.match(body, /Księgowanie w S\/4HANA jest wyłączone/);
+});
+
+
