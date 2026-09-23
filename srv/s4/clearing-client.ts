@@ -48,8 +48,10 @@ async function defaultHttpPost(url: string, body: unknown): Promise<unknown> {
         }
     }
     const { executeHttpRequest } = await import('@sap-cloud-sdk/http-client')
+    const cdsS4 = (global as any).cds?.env?.requires?.s4
+    const destinationName = process.env.S4_DESTINATION_NAME ?? cdsS4?.credentials?.destination ?? 'HD0_BAS'
     const response = await executeHttpRequest(
-        { destinationName: process.env.S4_DESTINATION_NAME ?? 'HD0_BAS' },
+        { destinationName },
         { method: 'post', url, headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, data: body, timeout: 30000 },
     )
     return response.data

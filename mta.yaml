@@ -10,7 +10,7 @@ build-parameters:
     - builder: custom
       commands:
         - npm ci --ignore-scripts
-        - npm run build:server
+        - npm run build:mta
 
 modules:
   - name: poc-cash-srv
@@ -24,29 +24,19 @@ modules:
       memory: 512M
       disk-quota: 512M
     properties:
-      CASH_AI_ENABLED: true
-      CASH_AI_PROVIDER: aicore
-      CASH_AI_BINDING_NAME: poc-cash-ai
+      CASH_AI_ENABLED: "true"
+      CASH_S4_ENABLED: "true"
     requires:
       - name: poc-cash-uaa
-      - name: poc-cash-ai
-      - name: poc-cash-destination
-
-  - name: poc-cash-app
-    type: html5
-    path: app/cashsync-ui
-    parameters:
-      memory: 256M
-      disk-quota: 256M
-    requires:
-      - name: poc-cash-uaa
+      - name: dest-service
+      - name: ai-core-srv
 
   - name: poc-cash-approuter
     type: approuter.nodejs
     path: approuter
     parameters:
       memory: 256M
-      disk-quota: 256M
+      disk-quota: 512M
       keep-existing-routes: true
     requires:
       - name: poc-cash-uaa
@@ -55,20 +45,19 @@ modules:
         properties:
           name: srv-api
           url: ~{srv-url}
-          forwardAuthToken: false
+          forwardAuthToken: true
           strictSSL: true
 
 resources:
-  - name: poc-cash-ai
+  - name: ai-core-srv
     type: org.cloudfoundry.existing-service
     parameters:
-      service-name: poc-cash-ai
+      service-name: ai-core-srv
 
-  - name: poc-cash-destination
-    type: org.cloudfoundry.managed-service
+  - name: dest-service
+    type: org.cloudfoundry.existing-service
     parameters:
-      service: destination
-      service-plan: lite
+      service-name: dest-service
 
   - name: poc-cash-uaa
     type: org.cloudfoundry.managed-service

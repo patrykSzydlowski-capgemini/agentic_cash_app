@@ -14,7 +14,8 @@
       "source": "^/cashsync-ui/(.*)$",
       "target": "/$1",
       "localDir": "resources",
-      "authenticationType": "xsuaa"
+      "authenticationType": "xsuaa",
+      "cacheControl": "no-cache, no-store, must-revalidate"
     }
   ]
 }

@@ -49,8 +49,10 @@ async function defaultHttpGet(url: string): Promise<unknown> {
     }
   }
   const { executeHttpRequest } = await import('@sap-cloud-sdk/http-client');
+  const cdsS4 = (global as any).cds?.env?.requires?.s4;
+  const destinationName = process.env.S4_DESTINATION_NAME ?? cdsS4?.credentials?.destination ?? 'HD0_BAS';
   const response = await executeHttpRequest(
-    { destinationName: process.env.S4_DESTINATION_NAME ?? 'HD0_BAS' },
+    { destinationName },
     {
       method: 'get',
       url,

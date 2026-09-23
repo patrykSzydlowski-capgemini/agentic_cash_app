@@ -1,0 +1,15 @@
+{
+  "name": "poc-cash-approuter",
+  "version": "1.0.0",
+  "description": "Approuter for Agentic Cash Matching Dashboard",
+  "private": true,
+  "scripts": {
+    "start": "node node_modules/@sap/approuter/approuter.js"
+  },
+  "dependencies": {
+    "@sap/approuter": "^16.0.0"
+  },
+  "engines": {
+    "node": ">=20.17.0"
+  }
+}

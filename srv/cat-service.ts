@@ -48,6 +48,22 @@ interface PipelineResult {
 
 export default class CashSyncServiceImpl extends cds.ApplicationService {
     async init() {
+        // Seed environment defaults from cds.env.requires (package.json) if not set in process.env
+        const cdsAi = (cds.env?.requires as Record<string, any> | undefined)?.aicore
+        if (!process.env.AICORE_DESTINATION && cdsAi?.credentials?.destination) {
+            process.env.AICORE_DESTINATION = cdsAi.credentials.destination
+        }
+        if (!process.env.AICORE_MODEL && cdsAi?.model) {
+            process.env.AICORE_MODEL = cdsAi.model
+        }
+        if (!process.env.AICORE_RESOURCE_GROUP && cdsAi?.resourceGroup) {
+            process.env.AICORE_RESOURCE_GROUP = cdsAi.resourceGroup
+        }
+        const cdsS4 = (cds.env?.requires as Record<string, any> | undefined)?.s4
+        if (!process.env.S4_DESTINATION_NAME && cdsS4?.credentials?.destination) {
+            process.env.S4_DESTINATION_NAME = cdsS4.credentials.destination
+        }
+
         const { MatchResult: DbMatchResult, OpenItem: DbOpenItem } = cds.entities('poc.cash')
 
         const resolveProvider = async () => {
@@ -62,8 +78,10 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             const name = process.env.CASH_AI_PROVIDER ?? 'aicore'
             const model = activeModelName()
             if (name === 'aicore') {
-                const dest = process.env.AICORE_DESTINATION ? `destination: ${process.env.AICORE_DESTINATION}` : 'service binding'
-                const rg = process.env.AICORE_RESOURCE_GROUP || 'default'
+                const cdsAi = (cds.env?.requires as Record<string, any> | undefined)?.aicore
+                const destinationName = process.env.AICORE_DESTINATION?.trim() || cdsAi?.credentials?.destination
+                const dest = destinationName ? `destination: ${destinationName}` : 'service binding'
+                const rg = process.env.AICORE_RESOURCE_GROUP || cdsAi?.resourceGroup || 'default'
                 return `aicore [model: ${model}, ${dest}, resourceGroup: ${rg}]`
             }
             return `openrouter [model: ${model}]`

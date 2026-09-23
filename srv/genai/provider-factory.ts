@@ -12,7 +12,8 @@ export function providerName(): 'openrouter' | 'aicore' {
 export function activeModelName(): string {
     const provider = process.env.CASH_AI_PROVIDER ?? 'aicore'
     if (provider === 'aicore') {
-        return process.env.AICORE_MODEL ?? 'anthropic--claude-4.5-sonnet'
+        const cdsAi = (global as any).cds?.env?.requires?.aicore
+        return process.env.AICORE_MODEL ?? cdsAi?.model ?? 'gemini-2.5-flash'
     }
     return process.env.OPENROUTER_MODEL ?? 'inclusionai/ling-3.0-flash-fin:free'
 }
