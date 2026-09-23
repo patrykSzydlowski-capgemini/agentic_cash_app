@@ -160,4 +160,79 @@ test('overpayment: referenced invoice with larger amount gives 50% score (toBeCh
   assert.match(matches[0].rationale, /120%/);
 });
 
+test('multi-invoice exact match: multiple referenced invoices whose amounts sum to payment amount give 100% score (full)', async () => {
+  const payment = {
+    payer: 'ACME Corp',
+    amount: 2500.00,
+    currency: 'USD',
+    valueDate: '2026-03-01',
+    references: ['INV-1001', 'INV-1002'],
+    extractionConfidence: 0.95,
+  };
 
+  const items: OpenItem[] = [
+    {
+      openItemId: 'INV-1001',
+      companyCode: '1000',
+      customerAccount: 'CUST-001',
+      customerName: 'ACME Corporation',
+      invoiceAmount: 1500.00,
+      invoiceAmountCurrency: 'USD',
+      clearingStatus: 'OPEN',
+    },
+    {
+      openItemId: 'INV-1002',
+      companyCode: '1000',
+      customerAccount: 'CUST-001',
+      customerName: 'ACME Corporation',
+      invoiceAmount: 1000.00,
+      invoiceAmountCurrency: 'USD',
+      clearingStatus: 'OPEN',
+    },
+  ];
+
+  const matches = await proposeMatches(payment, items);
+  assert.equal(matches.length, 2);
+  assert.ok(matches.every((m) => m.matchStatus === 'full'));
+  assert.ok(matches.every((m) => m.matchScore === 1));
+  assert.match(matches[0].rationale, /matching the payment amount exactly/);
+  assert.match(matches[1].rationale, /matching the payment amount exactly/);
+});
+
+test('multi-invoice sum mismatch: multiple referenced invoices with different sum give 50% score (toBeChecked)', async () => {
+  const payment = {
+    payer: 'ACME Corp',
+    amount: 2600.00, // 2500 total in items != 2600 in payment
+    currency: 'USD',
+    valueDate: '2026-03-01',
+    references: ['INV-1001', 'INV-1002'],
+    extractionConfidence: 0.95,
+  };
+
+  const items: OpenItem[] = [
+    {
+      openItemId: 'INV-1001',
+      companyCode: '1000',
+      customerAccount: 'CUST-001',
+      customerName: 'ACME Corporation',
+      invoiceAmount: 1500.00,
+      invoiceAmountCurrency: 'USD',
+      clearingStatus: 'OPEN',
+    },
+    {
+      openItemId: 'INV-1002',
+      companyCode: '1000',
+      customerAccount: 'CUST-001',
+      customerName: 'ACME Corporation',
+      invoiceAmount: 1000.00,
+      invoiceAmountCurrency: 'USD',
+      clearingStatus: 'OPEN',
+    },
+  ];
+
+  const matches = await proposeMatches(payment, items);
+  assert.equal(matches.length, 2);
+  assert.ok(matches.every((m) => m.matchStatus === 'toBeChecked'));
+  assert.ok(matches.every((m) => m.matchScore === 0.5));
+  assert.match(matches[0].rationale, /does not match the payment amount/);
+});

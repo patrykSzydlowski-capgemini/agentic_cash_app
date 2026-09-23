@@ -191,4 +191,25 @@ test('postToS4 returns 503 when CASH_S4_ENABLED is false', async () => {
     assert.match(body, /Księgowanie w S\/4HANA jest wyłączone/);
 });
 
+test('reprocessWithAI preserves multiple match candidates for multi-invoice payment', async () => {
+    const id = '00000001-0000-0000-0000-000000000004';
+    const response = await post(`/Payments('${id}')/CashSyncService.reprocessWithAI`, {});
+    assert.equal(response.status, 200);
+    const updated = await response.json();
+    assert.equal(updated.ID, id);
+    assert.equal(updated.status, 'matched');
+    assert.equal(Number(updated.extractionConfidence), 0.95);
 
+    const matches = (await get(`/Payments('${id}')/matches`)).value;
+    assert.equal(matches.length, 2, 'Must preserve both matched invoices');
+    const itemIds = matches.map((m: any) => m.openItemId).sort();
+    assert.deepEqual(itemIds, ['OP-1003', 'OP-1004']);
+});
+
+test('postToS4 on multi-invoice payment checks ERP enablement (503)', async () => {
+    const id = '00000001-0000-0000-0000-000000000004';
+    const response = await postRaw(`/Payments('${id}')/CashSyncService.postToS4`, {});
+    assert.equal(response.status, 503);
+    const body = await response.text();
+    assert.match(body, /Księgowanie w S\/4HANA jest wyłączone/);
+});

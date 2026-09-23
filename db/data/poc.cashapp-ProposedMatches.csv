@@ -1,3 +1,5 @@
 ID,payment_ID,openItemId,companyCode,customerAccount,amount,currency,matchStatus,reviewStatus,matchScore,rationale,postingId,documentNumber,postingError
 00000002-0000-0000-0000-000000000001,00000001-0000-0000-0000-000000000001,0123456789,1000,CUST-10,1000.00,EUR,full,posted,1.00,"Open item 0123456789 is referenced in the payment and its amount (1000.00 EUR) matches the payment exactly.",POST-0001,100000001,
 00000002-0000-0000-0000-000000000002,00000001-0000-0000-0000-000000000002,OP-1001,1000,CUST-01,1500.00,USD,full,pending,1.00,"Open item OP-1001 is referenced in the payment and its amount (1500.00 USD) matches the payment exactly.",,,
+00000002-0000-0000-0000-000000000003,00000001-0000-0000-0000-000000000004,OP-1003,1000,CUST-03,890.00,USD,full,pending,1.00,"Payment references multiple open items (OP-1003, OP-1004) whose amounts sum to 2090.00 USD, matching the payment amount exactly.",,,
+00000002-0000-0000-0000-000000000004,00000001-0000-0000-0000-000000000004,OP-1004,1000,CUST-04,1200.00,USD,full,pending,1.00,"Payment references multiple open items (OP-1003, OP-1004) whose amounts sum to 2090.00 USD, matching the payment amount exactly.",,,

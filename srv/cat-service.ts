@@ -469,10 +469,18 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 }
             }
 
+            let finalCandidates: ProposedMatchCandidate[] = []
             let newScore: number = 0.30
-            let matchedItemId: string = ''
-            let matchStatus: 'full' | 'probable' | 'toBeChecked' | 'noMatch' = 'noMatch'
-            let rationale: string = ''
+            let primaryRationale: string = ''
+
+            const extracted: ExtractedPayment = {
+                payer: payment.payer,
+                amount: Number(payment.amount),
+                currency: payment.currency,
+                valueDate: payment.valueDate,
+                references,
+                extractionConfidence: Number(payment.extractionConfidence ?? 0),
+            }
 
             if (process.env.CASH_AI_ENABLED === 'true') {
                 const tReval = Date.now()
@@ -495,12 +503,12 @@ Payment details:
 Available ERP Open Items:
 ${openItems.map(item => `- Item: ${item.openItemId}, Customer: "${item.customerName}", Amount: ${item.invoiceAmount} ${item.invoiceAmountCurrency}, Status: ${item.clearingStatus}`).join('\n')}
 
-Analyze the payment and find the matching open item in ERP (if any).
-Assess a realistic confidence score between 0.00 and 1.00 (e.g. 0.95 for exact match, 0.70-0.85 for probable match, 0.10-0.30 if no match).
+Analyze the payment and find the matching open item(s) in ERP. If the payment covers multiple open items, identify all of them.
+Assess a realistic confidence score between 0.00 and 1.00 (e.g. 0.95 for exact match / exact multi-item sum, 0.70-0.85 for probable match, 0.10-0.30 if no match).
 Return ONLY a single valid JSON object (no markdown, no quotes around json):
 {
   "confidence": number,
-  "matchedOpenItemId": string,
+  "matchedOpenItemIds": string[],
   "matchStatus": "full" | "probable" | "toBeChecked" | "noMatch",
   "rationale": string
 }`
@@ -509,64 +517,90 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                     const raw = await provider.generateText(prompt)
                     const cleanJson = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
                     const parsed = JSON.parse(cleanJson)
-                    newScore = typeof parsed.confidence === 'number' ? Math.round(parsed.confidence * 100) / 100 : 0.50
-                    matchedItemId = String(parsed.matchedOpenItemId || '').trim()
-                    matchStatus = parsed.matchStatus || (newScore >= 0.8 ? 'full' : (newScore >= 0.5 ? 'probable' : 'noMatch'))
-                    rationale = String(parsed.rationale || '')
+                    const conf = typeof parsed.confidence === 'number' ? Math.round(parsed.confidence * 100) / 100 : 0.50
+                    newScore = conf
+                    primaryRationale = String(parsed.rationale || '')
+                    const rawItemIds = parsed.matchedOpenItemIds || (parsed.matchedOpenItemId ? [parsed.matchedOpenItemId] : [])
+                    const matchedItemIds: string[] = Array.isArray(rawItemIds) ? rawItemIds.map(String).map(s => s.trim()).filter(Boolean) : []
+                    const mStatus = parsed.matchStatus || (newScore >= 0.8 ? 'full' : (newScore >= 0.5 ? 'probable' : 'noMatch'))
+
+                    if (matchedItemIds.length > 0) {
+                        finalCandidates = matchedItemIds.map(id => {
+                            const found = openItems.find(i => i.openItemId === id)
+                            return {
+                                openItemId: id,
+                                companyCode: found?.companyCode || '1000',
+                                customerAccount: found?.customerAccount || '',
+                                amount: found?.invoiceAmount || payment.amount,
+                                currency: found?.invoiceAmountCurrency || payment.currency,
+                                matchStatus: mStatus,
+                                matchScore: newScore,
+                                rationale: primaryRationale,
+                            }
+                        })
+                    }
+
                     const durationReval = Date.now() - tReval
                     LOG.info(`✅ [AI Re-validation] Completed in ${durationReval}ms (${(durationReval / 1000).toFixed(2)}s):`)
                     LOG.info(`   ↳ Model used: ${model}`)
                     LOG.info(`   ↳ Confidence: ${newScore}`)
-                    LOG.info(`   ↳ Matched item: ${matchedItemId || '(none)'}`)
-                    LOG.info(`   ↳ Match status: ${matchStatus}`)
-                    LOG.info(`   ↳ Rationale: ${rationale}`)
+                    LOG.info(`   ↳ Matched item(s): ${matchedItemIds.join(', ') || '(none)'}`)
+                    LOG.info(`   ↳ Rationale: ${primaryRationale}`)
                     LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
                 } catch (err) {
                     LOG.warn(`⚠️ [AI Re-validation] GenAI failed after ${Date.now() - tReval}ms, falling back to deterministic matching: ${(err as Error).message}`)
                 }
             }
 
-            // Fallback / deterministic evaluation if AI disabled or returned no item
-            if (!matchedItemId && process.env.CASH_AI_ENABLED !== 'true') {
-                const extracted: ExtractedPayment = {
-                    payer: payment.payer,
-                    amount: Number(payment.amount),
-                    currency: payment.currency,
-                    valueDate: payment.valueDate,
-                    references,
-                    extractionConfidence: Number(payment.extractionConfidence ?? 0),
-                }
+            // Fallback / deterministic evaluation if AI disabled or returned no items
+            if (finalCandidates.length === 0) {
                 const candidates = await proposeMatches(extracted, openItems)
-                const best = candidates.find(c => c.openItemId && c.matchStatus !== 'noMatch')
-                if (best) {
-                    matchedItemId = best.openItemId
-                    matchStatus = best.matchStatus
-                    newScore = best.matchStatus === 'full' ? 0.95 : (best.matchStatus === 'probable' ? 0.75 : 0.50)
-                    rationale = best.rationale
+                const validMatches = candidates.filter(c => c.openItemId && c.matchStatus !== 'noMatch')
+                if (validMatches.length > 0) {
+                    finalCandidates = validMatches.map(c => ({
+                        ...c,
+                        matchScore: c.matchStatus === 'full' ? 0.95 : (c.matchStatus === 'probable' ? 0.75 : 0.50),
+                    }))
+                    const best = finalCandidates.reduce((acc, cur) => cur.matchScore > acc.matchScore ? cur : acc, finalCandidates[0])
+                    newScore = best.matchScore
+                    primaryRationale = best.rationale
                 } else {
                     newScore = 0.25
-                    matchStatus = 'noMatch'
-                    rationale = candidates[0]?.rationale || 'No matching open item found in ERP.'
+                    primaryRationale = candidates[0]?.rationale || 'No matching open item found in ERP.'
                 }
             }
 
             const newStatus = newScore >= 0.8 ? 'matched' : 'needsReview'
-            const matchedItem = openItems.find(i => i.openItemId === matchedItemId)
 
             // Replace proposed matches for this payment
             await DELETE.from(ProposedMatches).where({ payment_ID: ID })
-            await INSERT.into(ProposedMatches).entries({
-                payment_ID: ID,
-                openItemId: matchedItemId || '(brak dopasowania)',
-                companyCode: matchedItem?.companyCode || '1000',
-                customerAccount: matchedItem?.customerAccount || '',
-                amount: matchedItem?.invoiceAmount || payment.amount,
-                currency: matchedItem?.invoiceAmountCurrency || payment.currency,
-                matchStatus,
-                matchScore: newScore,
-                reviewStatus: newStatus === 'matched' ? 'approved' : 'pending',
-                rationale: rationale || `AI rewalidacja: status ${matchStatus} z oceną ${newScore.toFixed(2)}.`,
-            })
+            if (finalCandidates.length > 0) {
+                await INSERT.into(ProposedMatches).entries(finalCandidates.map(c => ({
+                    payment_ID: ID,
+                    openItemId: c.openItemId,
+                    companyCode: c.companyCode || '1000',
+                    customerAccount: c.customerAccount || '',
+                    amount: c.amount,
+                    currency: c.currency,
+                    matchStatus: c.matchStatus,
+                    matchScore: c.matchScore,
+                    reviewStatus: newStatus === 'matched' ? 'approved' : 'pending',
+                    rationale: c.rationale || primaryRationale || `AI rewalidacja: status ${c.matchStatus} z oceną ${c.matchScore.toFixed(2)}.`,
+                })))
+            } else {
+                await INSERT.into(ProposedMatches).entries({
+                    payment_ID: ID,
+                    openItemId: '(brak dopasowania)',
+                    companyCode: '1000',
+                    customerAccount: '',
+                    amount: payment.amount,
+                    currency: payment.currency,
+                    matchStatus: 'noMatch',
+                    matchScore: newScore,
+                    reviewStatus: 'pending',
+                    rationale: primaryRationale || `AI rewalidacja: brak dopasowania (ocena ${newScore.toFixed(2)}).`,
+                })
+            }
 
             const oldScore = Number(payment.extractionConfidence ?? 0).toFixed(2)
             const updatedScore = Number(newScore).toFixed(2)
@@ -575,14 +609,14 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             await UPDATE.entity(Payments, ID).with({
                 extractionConfidence: newScore,
                 status: newStatus,
-                rationale: rationale || `AI rewalidacja: status ${matchStatus} z oceną ${newScore.toFixed(2)}.`,
+                rationale: primaryRationale || `AI rewalidacja: status ${newStatus} z oceną ${newScore.toFixed(2)}.`,
             })
 
             LOG.info(`✅ [AI Re-validation] Completed for payment ${ID}`)
             LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
 
-            const toastMsg = matchedItemId
-                ? `Rewalidacja AI (${payment.payer}): ocena ${updatedScore}, status: ${newStatus}, dopasowanie: ${matchedItemId}`
+            const toastMsg = finalCandidates.length > 0
+                ? `Rewalidacja AI (${payment.payer}): ocena ${updatedScore}, status: ${newStatus}, dopasowano ${finalCandidates.length} pozycji: ${finalCandidates.map(c => c.openItemId).join(', ')}`
                 : `Rewalidacja AI (${payment.payer}): ocena ${updatedScore}, status: ${newStatus} (brak dopasowania)`
             req.notify(toastMsg)
 
@@ -604,11 +638,16 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             }
 
             const matches = await SELECT.from(ProposedMatches).where({ payment_ID: ID })
-            const validMatch = matches.find((m: any) => m.openItemId && m.openItemId !== '(brak dopasowania)' && m.openItemId !== '')
+            const validMatches = matches.filter((m: any) => m.openItemId && m.openItemId !== '(brak dopasowania)' && m.openItemId !== '')
 
-            if (!validMatch) {
+            if (validMatches.length === 0) {
                 LOG.warn(`[Manual Post] No valid open item associated with payment ${ID}.`)
                 return req.error(400, `Płatność (${payment.payer}) nie posiada powiązanej otwartej pozycji w SAP. Dopasuj pozycję przed zaksięgowaniem.`)
+            }
+
+            const pendingMatches = validMatches.filter((m: any) => m.reviewStatus !== 'posted')
+            if (pendingMatches.length === 0) {
+                return req.error(400, `Wszystkie pozycje dla ${payment.payer} zostały już zaksięgowane w S/4HANA.`)
             }
 
             if (process.env.CASH_S4_ENABLED !== 'true') {
@@ -616,61 +655,82 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 return req.error(503, 'Księgowanie w S/4HANA jest wyłączone. Ustaw CASH_S4_ENABLED=true tylko za zgodą.')
             }
 
-            LOG.info(`🏦 [S/4 Clearing] Posting clearance document to S/4HANA for open item ${validMatch.openItemId} (${validMatch.customerAccount}, ${validMatch.amount} ${validMatch.currency})...`)
-            let result: ClearingResult
+            LOG.info(`🏦 [S/4 Clearing] Posting ${pendingMatches.length} clearance document(s) to S/4HANA for payment ${ID}...`)
+            const clearingMatches = pendingMatches.map((m: any) => ({
+                openItemId: m.openItemId,
+                companyCode: m.companyCode || '1000',
+                amount: Number(m.amount || payment.amount),
+                currency: m.currency || payment.currency,
+                customer: m.customerAccount || '',
+            }))
+
+            let results: ClearingResult[]
             try {
-                const [clearingResult] = await postClearing([{
-                    openItemId: validMatch.openItemId,
-                    companyCode: validMatch.companyCode || '1000',
-                    amount: Number(validMatch.amount || payment.amount),
-                    currency: validMatch.currency || payment.currency,
-                    customer: validMatch.customerAccount || '',
-                }])
-                result = clearingResult
+                results = await postClearing(clearingMatches)
             } catch (networkErr: any) {
                 const errorMsg = networkErr?.message || String(networkErr)
                 LOG.error(`❌ [S/4 Clearing] S/4HANA Destination/Connectivity error: ${errorMsg}`)
-                await UPDATE.entity(ProposedMatches, validMatch.ID).with({
-                    reviewStatus: 'approved',
-                    postingId: null,
-                    documentNumber: null,
-                    postingError: errorMsg,
-                })
+                for (const m of pendingMatches) {
+                    await UPDATE.entity(ProposedMatches, m.ID).with({
+                        reviewStatus: 'approved',
+                        postingId: null,
+                        documentNumber: null,
+                        postingError: errorMsg,
+                    })
+                }
                 return req.error(502, `Błąd połączenia z S/4HANA: ${errorMsg}`)
             }
 
             const SAP_FAIL_SEVERITY = 3
-            const failed = result.sapMessages.some((m: SapMessage) => m.numericSeverity >= SAP_FAIL_SEVERITY)
+            let hasFailures = false
+            const docNumbers: string[] = []
 
-            if (failed) {
-                const errorMsg = result.sapMessages.map((m: SapMessage) => `[${m.code}] ${m.message}`).join('; ')
-                    || 'Posting failed with no SAP message detail.'
-                LOG.error(`❌ [S/4 Clearing] Posting failed: ${errorMsg}`)
-                await UPDATE.entity(ProposedMatches, validMatch.ID).with({
-                    reviewStatus: 'approved',
-                    postingId: null,
-                    documentNumber: null,
-                    postingError: errorMsg,
-                })
-                return req.error(502, `Błąd księgowania w S/4HANA: ${errorMsg}`)
+            for (let i = 0; i < pendingMatches.length; i++) {
+                const match = pendingMatches[i]
+                const result = results[i]
+                const failed = !result || result.sapMessages.some((m: SapMessage) => m.numericSeverity >= SAP_FAIL_SEVERITY)
+
+                if (failed) {
+                    hasFailures = true
+                    const errorMsg = result?.sapMessages?.map((m: SapMessage) => `[${m.code}] ${m.message}`).join('; ')
+                        || 'Posting failed with no SAP message detail.'
+                    LOG.error(`❌ [S/4 Clearing] Item ${match.openItemId} posting failed: ${errorMsg}`)
+                    await UPDATE.entity(ProposedMatches, match.ID).with({
+                        reviewStatus: 'approved',
+                        postingId: null,
+                        documentNumber: null,
+                        postingError: errorMsg,
+                    })
+                } else {
+                    LOG.info(`✅ [S/4 Clearing] Item ${match.openItemId} posting succeeded! DocumentNumber: ${result.documentNumber}, PostingId: ${result.postingId}`)
+                    docNumbers.push(result.documentNumber)
+                    await UPDATE.entity(ProposedMatches, match.ID).with({
+                        reviewStatus: 'posted',
+                        postingId: result.postingId,
+                        documentNumber: result.documentNumber,
+                        postingError: null,
+                    })
+                }
             }
 
-            LOG.info(`✅ [S/4 Clearing] Posting succeeded! DocumentNumber: ${result.documentNumber}, PostingId: ${result.postingId}`)
-            await UPDATE.entity(ProposedMatches, validMatch.ID).with({
-                reviewStatus: 'posted',
-                postingId: result.postingId,
-                documentNumber: result.documentNumber,
-                postingError: null,
-            })
+            if (!hasFailures) {
+                const remainingUnposted = await SELECT.from(ProposedMatches)
+                    .where({ payment_ID: ID })
+                    .and({ reviewStatus: { '!=': 'posted' } })
 
-            await UPDATE.entity(Payments, ID).with({
-                status: 'cleared',
-            })
-
-            LOG.info(`✅ [Manual Post] Payment ${ID} status updated to "cleared"`)
-            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-            req.notify(`Płatność (${payment.payer}) została pomyślnie zaksięgowana w S/4HANA. Nr dokumentu: ${result.documentNumber}`)
-            return SELECT.one.from(Payments, ID)
+                if (remainingUnposted.length === 0) {
+                    await UPDATE.entity(Payments, ID).with({
+                        status: 'cleared',
+                    })
+                    LOG.info(`✅ [Manual Post] All items posted. Payment ${ID} status updated to "cleared"`)
+                }
+                LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+                req.notify(`Płatność (${payment.payer}) została pomyślnie zaksięgowana w S/4HANA (${docNumbers.length} pozycji). Nr dok.: ${docNumbers.join(', ')}`)
+                return SELECT.one.from(Payments, ID)
+            } else {
+                LOG.warn(`⚠️ [Manual Post] Partial or complete failure during posting for payment ${ID}`)
+                return req.error(502, `Błąd księgowania w S/4HANA: część pozycji nie została zaksięgowana.`)
+            }
         })
 
         // Open Items browser: live S/4 read when enabled, honest 503 otherwise.
@@ -745,7 +805,17 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 })
                 if (match.payment_ID) {
                     const { Payments } = cds.entities('poc.cashapp')
-                    await UPDATE.entity(Payments, match.payment_ID).with({ status: 'cleared' })
+                    const unpostedMatches = await SELECT.from(ProposedMatches)
+                        .where({ payment_ID: match.payment_ID })
+                        .and({ ID: { '!=': ID } })
+                        .and({ reviewStatus: { '!=': 'posted' } })
+
+                    if (unpostedMatches.length === 0) {
+                        await UPDATE.entity(Payments, match.payment_ID).with({ status: 'cleared' })
+                        LOG.info(`✅ [Review Action] All matches posted. Payment ${match.payment_ID} status set to "cleared".`)
+                    } else {
+                        LOG.info(`ℹ️ [Review Action] Payment ${match.payment_ID} still has ${unpostedMatches.length} unposted match(es).`)
+                    }
                 }
             }
 
