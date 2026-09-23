@@ -65,3 +65,12 @@ test('SAP orchestration adapter sanitizes SDK errors and supports config overrid
         return true
     })
 })
+
+test('SAP orchestration adapter supports AICORE_DESTINATION', () => {
+    process.env.AICORE_DESTINATION = 'SAP_AI_CORE_DEST'
+    assert.deepEqual(orchestrationConfig(), {
+        model: 'anthropic--claude-4.5-sonnet',
+        resourceGroup: 'default',
+        destinationName: 'SAP_AI_CORE_DEST',
+    })
+})

@@ -14,18 +14,33 @@ export type ClientFactory = () => Promise<{
 }>
 
 export function orchestrationConfig() {
+    const destinationName = process.env.AICORE_DESTINATION?.trim()
     return {
         model: process.env.AICORE_MODEL ?? 'anthropic--claude-4.5-sonnet',
         resourceGroup: process.env.AICORE_RESOURCE_GROUP ?? 'default',
+        ...(destinationName ? { destinationName } : {}),
     }
 }
 
 const createClient: ClientFactory = async () => {
+    if (!process.env.VCAP_SERVICES) {
+        try {
+            // @ts-expect-error @sap/xsenv does not bundle type declarations
+            const xsenv = (await import('@sap/xsenv')).default
+            xsenv.loadEnv()
+        } catch {
+            // ignore if default-env.json is missing or invalid
+        }
+    }
     const { OrchestrationClient } = await import('@sap-ai-sdk/orchestration')
     const config = orchestrationConfig()
+    const destination = config.destinationName
+        ? { destinationName: config.destinationName }
+        : undefined
     return new OrchestrationClient(
         { promptTemplating: { model: { name: config.model } } },
         { resourceGroup: config.resourceGroup },
+        destination,
     )
 }
 
@@ -37,7 +52,8 @@ async function complete(messages: Message[], factory: ClientFactory): Promise<st
         content = (await client.chatCompletion({ messages })).getContent()
     } catch {
         // SDK errors may contain service credentials or document text.
-        throw new Error('SAP orchestration request failed. Check binding, model, resource group and quota.')
+        const dest = process.env.AICORE_DESTINATION ? ` (destination: "${process.env.AICORE_DESTINATION}")` : ''
+        throw new Error(`SAP orchestration request failed${dest}. Check destination, binding, model, resource group and quota.`)
     }
     if (!content?.trim()) throw new Error('Orchestration service returned no content.')
     return content

@@ -29,8 +29,8 @@
   },
   "scripts": {
     "start": "cds-serve",
-    "watch": "cds watch",
-    "dev": "cds watch --in-memory",
+    "watch": "cds bind --exec -- cds watch",
+    "dev": "cds bind --exec -- cds watch --in-memory",
     "pretypecheck": "npm run cds:types",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:all": "tsc -p tsconfig.all.json --noEmit",
@@ -40,7 +40,7 @@
     "pretest:built": "npm run build:server",
     "test:built": "node --import tsx --test test/*.test.ts",
     "build:server": "cds build --production",
-    "ai:check": "node --import tsx scripts/live-ai-check.ts",
+    "ai:check": "cds bind --exec -- node --import tsx scripts/live-ai-check.ts",
     "ai:process": "node --import tsx scripts/process-payment.ts",
     "ai:cf:create": "node --import tsx scripts/configure-ai-cf.ts create",
     "ai:cf:update": "node --import tsx scripts/configure-ai-cf.ts update"
@@ -54,6 +54,12 @@
         "kind": "user-provided",
         "vcap": {
           "name": "poc-cash-ai"
+        }
+      },
+      "AICORE_DESTINATION": {
+        "kind": "rest",
+        "credentials": {
+          "destination": "AICORE_DESTINATION"
         }
       },
       "ZAC_OPENITEMS_MOC_O4": {

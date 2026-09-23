@@ -12,6 +12,7 @@ import type { ProposedMatchCandidate } from './agents/matching-agent.js'
 import type { OpenItem } from './s4/open-items-client.js'
 import { getOpenItems as getLiveOpenItems } from './s4/open-items-client.js'
 import { postClearing, type SapMessage } from './s4/clearing-client.js'
+import { activeModelName } from './genai/index.js'
 
 // Below this extractionConfidence the Matching Agent is skipped entirely
 // rather than run on shaky data, and the payment goes straight to needsReview.
@@ -166,20 +167,35 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             return (await import('./genai/index.js')).getProvider()
         }
 
-        const providerMode = () =>
-            process.env.CASH_AI_ENABLED === 'true' ? (process.env.CASH_AI_PROVIDER ?? 'openrouter') : 'mock'
+        const providerMode = () => {
+            if (process.env.CASH_AI_ENABLED !== 'true') return 'mock'
+            const name = process.env.CASH_AI_PROVIDER ?? 'aicore'
+            const model = activeModelName()
+            if (name === 'aicore') {
+                const dest = process.env.AICORE_DESTINATION ? `destination: ${process.env.AICORE_DESTINATION}` : 'service binding'
+                const rg = process.env.AICORE_RESOURCE_GROUP || 'default'
+                return `aicore [model: ${model}, ${dest}, resourceGroup: ${rg}]`
+            }
+            return `openrouter [model: ${model}]`
+        }
 
         const runPipeline = async (pdfBytes: Buffer): Promise<PipelineResult> => {
             const t0 = Date.now()
             const pMode = providerMode()
+            const model = activeModelName()
             LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-            LOG.info(`🚀 [AI Pipeline] Starting payment processing (${pdfBytes.length} bytes, provider: ${pMode})`)
+            LOG.info(`🚀 [AI Pipeline] Starting payment processing`)
+            LOG.info(`   ↳ File Size: ${pdfBytes.length} bytes`)
+            LOG.info(`   ↳ Engine: ${pMode}`)
+            LOG.info(`   ↳ Model: ${model}`)
 
             const tExtract = Date.now()
-            LOG.info(`🤖 [Step 1/3: Extraction Agent] Extracting payment fields from PDF...`)
+            LOG.info(`🤖 [Step 1/3: Extraction Agent] Extracting payment fields from PDF using "${model}"...`)
             const provider = await resolveProvider()
             const payment = await extractPayment(pdfBytes, provider.extractDocument)
-            LOG.info(`✅ [Step 1/3: Extraction Agent] Extracted in ${Date.now() - tExtract}ms:`, {
+            const durationExtract = Date.now() - tExtract
+            LOG.info(`✅ [Step 1/3: Extraction Agent] Extraction completed in ${durationExtract}ms (${(durationExtract / 1000).toFixed(2)}s):`, {
+                model,
                 payer: payment.payer,
                 amount: `${payment.amount} ${payment.currency}`,
                 valueDate: payment.valueDate,
@@ -191,16 +207,19 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             LOG.info(`🔍 [Step 2/3: Matching Agent] Fetching ERP open items and calculating candidates...`)
             const openItems = await loadOpenItems()
             const candidates = await proposeMatches(payment, openItems, provider.generateText)
-            LOG.info(`🎯 [Step 2/3: Matching Agent] Found ${candidates.length} match candidate(s) in ${Date.now() - tMatch}ms:`)
+            const durationMatch = Date.now() - tMatch
+            LOG.info(`🎯 [Step 2/3: Matching Agent] Found ${candidates.length} match candidate(s) in ${durationMatch}ms (${(durationMatch / 1000).toFixed(2)}s):`)
             for (const c of candidates) {
                 LOG.info(`   ↳ [${c.matchStatus.toUpperCase()}] Item: ${c.openItemId || '(none)'} | Score: ${c.matchScore} | ${c.rationale}`)
             }
-            LOG.info(`⏱ [AI Pipeline] Analysis finished in ${Date.now() - t0}ms`)
+            const totalPipelineTime = Date.now() - t0
+            LOG.info(`⏱ [AI Pipeline] Processing finished in ${totalPipelineTime}ms (${(totalPipelineTime / 1000).toFixed(2)}s) [Extraction: ${durationExtract}ms | Matching: ${durationMatch}ms]`)
             LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
             return { payment, candidates, openItems }
         }
 
         const persistPayment = async (payment: ExtractedPayment, candidates: ProposedMatchCandidate[]): Promise<{ paymentId: string, matchCount: number }> => {
+            const tPersist = Date.now()
             const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
             const paymentId = randomUUID()
             const status = payment.extractionConfidence < LOW_CONFIDENCE_THRESHOLD ? 'needsReview' : 'matched'
@@ -227,7 +246,8 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 matchScore: candidate.matchScore,
                 rationale: candidate.rationale,
             })))
-            LOG.info(`✅ [Step 3/3: Persistence] Successfully stored payment ${paymentId}`)
+            const durationPersist = Date.now() - tPersist
+            LOG.info(`✅ [Step 3/3: Persistence] Successfully stored payment ${paymentId} in ${durationPersist}ms`)
             return { paymentId, matchCount: persistedCandidates.length }
         }
 
@@ -238,6 +258,7 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         }
 
         const storeUpload = async (req: Request, fileName: string, fileContent: unknown) => {
+            const tUploadStart = Date.now()
             LOG.info(`📥 [Upload] Received file upload: "${fileName}"`)
             let pdfBytes: Buffer
             try {
@@ -254,12 +275,13 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 ({ payment, candidates } = await runPipeline(pdfBytes))
             } catch (err) {
                 const error = err as Error
-                LOG.error(`❌ [Upload] Pipeline failed for "${fileName}": ${error.message}`)
+                LOG.error(`❌ [Upload] Pipeline failed for "${fileName}" after ${Date.now() - tUploadStart}ms: ${error.message}`)
                 return req.error(422, `Extraction failed for "${fileName}": ${error.message}`)
             }
             const { Payments } = cds.entities('poc.cashapp')
             const { paymentId } = await persistPayment(payment, candidates)
-            LOG.info(`🎉 [Upload] Complete! Stored payment ${paymentId} for file "${fileName}"`)
+            const totalUploadDuration = Date.now() - tUploadStart
+            LOG.info(`🎉 [Upload] Complete! Stored payment ${paymentId} for file "${fileName}" in ${totalUploadDuration}ms (${(totalUploadDuration / 1000).toFixed(2)}s)`)
             return SELECT.one.from(Payments, paymentId)
         }
 
@@ -311,7 +333,13 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             let rationale: string = ''
 
             if (process.env.CASH_AI_ENABLED === 'true') {
-                LOG.info(`🤖 [AI Re-validation] Calling GenAI (${providerMode()}) to re-evaluate payment match and confidence...`)
+                const tReval = Date.now()
+                const model = activeModelName()
+                LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+                LOG.info(`🤖 [AI Re-validation] Re-evaluating payment with GenAI...`)
+                LOG.info(`   ↳ Payment: ID=${payment.ID}, Payer="${payment.payer}", Amount=${payment.amount} ${payment.currency}`)
+                LOG.info(`   ↳ Engine: ${providerMode()}`)
+                LOG.info(`   ↳ Model: ${model}`)
                 const provider = await (await import('./genai/index.js')).getProvider()
                 const prompt = `You are an AI Cash Application Matching Agent in SAP.
 An operator has requested an AI re-validation of a payment against open ERP invoices.
@@ -343,9 +371,16 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                     matchedItemId = String(parsed.matchedOpenItemId || '').trim()
                     matchStatus = parsed.matchStatus || (newScore >= 0.8 ? 'full' : (newScore >= 0.5 ? 'probable' : 'noMatch'))
                     rationale = String(parsed.rationale || '')
-                    LOG.info(`🤖 [AI Re-validation] GenAI returned: confidence=${newScore}, match=${matchedItemId || '(none)'}, status=${matchStatus}`)
+                    const durationReval = Date.now() - tReval
+                    LOG.info(`✅ [AI Re-validation] Completed in ${durationReval}ms (${(durationReval / 1000).toFixed(2)}s):`)
+                    LOG.info(`   ↳ Model used: ${model}`)
+                    LOG.info(`   ↳ Confidence: ${newScore}`)
+                    LOG.info(`   ↳ Matched item: ${matchedItemId || '(none)'}`)
+                    LOG.info(`   ↳ Match status: ${matchStatus}`)
+                    LOG.info(`   ↳ Rationale: ${rationale}`)
+                    LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
                 } catch (err) {
-                    LOG.warn(`[AI Re-validation] GenAI parsing error, falling back to deterministic matching: ${(err as Error).message}`)
+                    LOG.warn(`⚠️ [AI Re-validation] GenAI failed after ${Date.now() - tReval}ms, falling back to deterministic matching: ${(err as Error).message}`)
                 }
             }
 

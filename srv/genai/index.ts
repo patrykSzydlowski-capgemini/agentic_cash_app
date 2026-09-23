@@ -13,6 +13,14 @@ export function providerName(): 'openrouter' | 'aicore' {
     return name
 }
 
+export function activeModelName(): string {
+    const provider = process.env.CASH_AI_PROVIDER ?? 'aicore'
+    if (provider === 'aicore') {
+        return process.env.AICORE_MODEL ?? 'anthropic--claude-4.5-sonnet'
+    }
+    return process.env.OPENROUTER_MODEL ?? 'inclusionai/ling-3.0-flash-fin:free'
+}
+
 export async function getProvider(): Promise<AIProvider> {
     requireAIEnabled()
     return providerName() === 'aicore'

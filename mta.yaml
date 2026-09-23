@@ -30,6 +30,7 @@ modules:
     requires:
       - name: poc-cash-uaa
       - name: poc-cash-ai
+      - name: poc-cash-destination
 
   - name: poc-cash-app
     type: html5
@@ -62,6 +63,12 @@ resources:
     type: org.cloudfoundry.existing-service
     parameters:
       service-name: poc-cash-ai
+
+  - name: poc-cash-destination
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite
 
   - name: poc-cash-uaa
     type: org.cloudfoundry.managed-service
