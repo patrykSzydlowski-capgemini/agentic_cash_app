@@ -47,6 +47,8 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             const first = req.params[0] as { match_id?: string } | string | undefined
             const matchId = typeof first === 'object' ? (first?.match_id ?? first) : first
 
+            LOG.info(`[Operator Action] Manual approval triggered for MatchResult ID: ${matchId}`)
+
             await UPDATE.entity(DbMatchResult)
                 .set({
                     match_status: 'MATCHED',
@@ -56,12 +58,16 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 })
                 .where({ match_id: matchId })
 
+            LOG.info(`[Operator Action] MatchResult ${matchId} updated -> Status: MATCHED, Review: APPROVED`)
             req.notify(`Agent successfully processed record ${matchId}`)
         })
 
         // 2. Webhook / Action for external match ingestion
         this.on('ingestAgentMatch', async (req: Request) => {
             const { match_id, open_item_id, matched_amount, confidence, review_reason } = req.data as IngestAgentMatchPayload
+            const matchStatus = Number(confidence) > 0.8 ? 'MATCHED' : 'NEEDS_REVIEW'
+
+            LOG.info(`[Ingest Match] Ingesting match ${match_id} for open item ${open_item_id} (amount: ${matched_amount}, confidence: ${confidence}) -> status: ${matchStatus}`)
 
             await INSERT.into(DbMatchResult).entries({
                 match_id,
@@ -69,10 +75,11 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 matched_amount,
                 confidence,
                 review_reason,
-                match_status: Number(confidence) > 0.8 ? 'MATCHED' : 'NEEDS_REVIEW',
+                match_status: matchStatus,
                 action_required: Number(confidence) <= 0.8,
             })
 
+            LOG.info(`[Ingest Match] Successfully stored MatchResult ${match_id}`)
             return 'Match stored successfully'
         })
 
@@ -81,9 +88,11 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             const rows = await SELECT.from(DbOpenItem)
 
             if (!rows || rows.length === 0) {
+                LOG.warn('[Gemini Analysis] No open items found to analyze.')
                 return 'No open items to analyze.'
             }
 
+            LOG.info(`[Gemini Analysis] Starting AI analysis for ${rows.length} open item(s)...`)
             let processed = 0
 
             for (const item of rows) {
@@ -92,6 +101,8 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 const invoiceAmount = Number(item.InvoiceAmount ?? 0)
 
                 const mockBankStatement = `Payment for invoice ${itemId} - ${customerName}`
+
+                LOG.info(`[Gemini Analysis] (${processed + 1}/${rows.length}) Analyzing item ${itemId} (${customerName}, ${invoiceAmount} USD)...`)
 
                 const agentResult = await this.callAgentAPI({
                     OpenItemId: itemId,
@@ -116,9 +127,11 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                     action_required: status === 'NEEDS_REVIEW'
                 })
 
+                LOG.info(`[Gemini Analysis] Saved verdict ${matchId}: status=${status}, confidence=${agentResult.confidence}, reason="${agentResult.reason}"`)
                 processed++
             }
 
+            LOG.info(`[Gemini Analysis] Batch analysis complete. Successfully saved ${processed} item(s).`)
             return `Analyzed ${processed} items. Results saved.`
         })
 
@@ -126,10 +139,15 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         // SAP AI Hub (orchestration) by default, optional OpenRouter via CASH_AI_PROVIDER.
         // Disabled AI uses explicit local mocks, never fallback after a live error.
         const loadOpenItems = async (): Promise<OpenItem[]> => {
+            const source = process.env.CASH_S4_ENABLED === 'true' ? 'Live S/4HANA' : 'Local SQLite'
+            LOG.info(`[ERP Open Items] Loading open items from ${source}...`)
             if (process.env.CASH_S4_ENABLED === 'true') {
-                return getLiveOpenItems()
+                const liveItems = await getLiveOpenItems()
+                LOG.info(`[ERP Open Items] Loaded ${liveItems.length} open item(s) from S/4HANA`)
+                return liveItems
             }
             const rows = await SELECT.from(DbOpenItem)
+            LOG.info(`[ERP Open Items] Loaded ${rows.length} open item(s) from SQLite`)
             return rows.map((row: Record<string, unknown>) => ({
                 openItemId: String(row.OpenItemId),
                 companyCode: String(row.CompanyCode),
@@ -152,10 +170,33 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             process.env.CASH_AI_ENABLED === 'true' ? (process.env.CASH_AI_PROVIDER ?? 'openrouter') : 'mock'
 
         const runPipeline = async (pdfBytes: Buffer): Promise<PipelineResult> => {
+            const t0 = Date.now()
+            const pMode = providerMode()
+            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+            LOG.info(`🚀 [AI Pipeline] Starting payment processing (${pdfBytes.length} bytes, provider: ${pMode})`)
+
+            const tExtract = Date.now()
+            LOG.info(`🤖 [Step 1/3: Extraction Agent] Extracting payment fields from PDF...`)
             const provider = await resolveProvider()
             const payment = await extractPayment(pdfBytes, provider.extractDocument)
+            LOG.info(`✅ [Step 1/3: Extraction Agent] Extracted in ${Date.now() - tExtract}ms:`, {
+                payer: payment.payer,
+                amount: `${payment.amount} ${payment.currency}`,
+                valueDate: payment.valueDate,
+                references: payment.references,
+                confidence: payment.extractionConfidence
+            })
+
+            const tMatch = Date.now()
+            LOG.info(`🔍 [Step 2/3: Matching Agent] Fetching ERP open items and calculating candidates...`)
             const openItems = await loadOpenItems()
             const candidates = await proposeMatches(payment, openItems, provider.generateText)
+            LOG.info(`🎯 [Step 2/3: Matching Agent] Found ${candidates.length} match candidate(s) in ${Date.now() - tMatch}ms:`)
+            for (const c of candidates) {
+                LOG.info(`   ↳ [${c.matchStatus.toUpperCase()}] Item: ${c.openItemId || '(none)'} | Score: ${c.matchScore} | ${c.rationale}`)
+            }
+            LOG.info(`⏱ [AI Pipeline] Analysis finished in ${Date.now() - t0}ms`)
+            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
             return { payment, candidates, openItems }
         }
 
@@ -164,6 +205,7 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             const paymentId = randomUUID()
             const status = payment.extractionConfidence < LOW_CONFIDENCE_THRESHOLD ? 'needsReview' : 'matched'
             const persistedCandidates = status === 'needsReview' ? [] : candidates
+            LOG.info(`💾 [Step 3/3: Persistence] Saving payment ${paymentId} with status="${status}" (${persistedCandidates.length} match(es) stored)...`)
             await INSERT.into(Payments).entries({
                 ID: paymentId,
                 payer: payment.payer,
@@ -185,6 +227,7 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 matchScore: candidate.matchScore,
                 rationale: candidate.rationale,
             })))
+            LOG.info(`✅ [Step 3/3: Persistence] Successfully stored payment ${paymentId}`)
             return { paymentId, matchCount: persistedCandidates.length }
         }
 
@@ -195,11 +238,14 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         }
 
         const storeUpload = async (req: Request, fileName: string, fileContent: unknown) => {
+            LOG.info(`📥 [Upload] Received file upload: "${fileName}"`)
             let pdfBytes: Buffer
             try {
                 pdfBytes = decodeFileContent(fileContent)
+                LOG.info(`📥 [Upload] Decoded file "${fileName}": ${pdfBytes.length} bytes`)
             } catch (err) {
                 const error = err as Error
+                LOG.error(`❌ [Upload] Could not decode fileContent for "${fileName}": ${error.message}`)
                 return req.error(400, `Could not decode fileContent for "${fileName}": ${error.message}`)
             }
             let payment: ExtractedPayment
@@ -208,21 +254,25 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 ({ payment, candidates } = await runPipeline(pdfBytes))
             } catch (err) {
                 const error = err as Error
+                LOG.error(`❌ [Upload] Pipeline failed for "${fileName}": ${error.message}`)
                 return req.error(422, `Extraction failed for "${fileName}": ${error.message}`)
             }
             const { Payments } = cds.entities('poc.cashapp')
             const { paymentId } = await persistPayment(payment, candidates)
+            LOG.info(`🎉 [Upload] Complete! Stored payment ${paymentId} for file "${fileName}"`)
             return SELECT.one.from(Payments, paymentId)
         }
 
         this.on('processPaymentDocument', async (req: Request) => {
             const { pdfBase64 } = req.data as ProcessPaymentDocumentPayload
             if (!pdfBase64) req.error({ code: '400', message: 'pdfBase64 is required' })
+            LOG.info(`⚙️ [Process] processPaymentDocument triggered (payload length: ${pdfBase64?.length ?? 0} chars)`)
             const pdfBytes = Buffer.from(pdfBase64 ?? '', 'base64')
 
             const { payment, candidates } = await runPipeline(pdfBytes)
             const { paymentId, matchCount } = await persistPayment(payment, candidates)
 
+            LOG.info(`🎉 [Process] Complete! Stored ${matchCount} proposed match(es) for payment ${paymentId}`)
             return `Stored ${matchCount} proposed match(es) for payment ${paymentId}`
         })
 
@@ -231,6 +281,134 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         this.on('uploadPayment', async (req: Request) => {
             const { fileName, fileContent } = req.data as { fileName: string; fileContent: unknown }
             return storeUpload(req, fileName, fileContent)
+        })
+
+        // Operator action: re-evaluates selected payment(s) against ERP open items via AI agent.
+        this.on('reprocessWithAI', 'Payments', async (req: Request) => {
+            const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
+            const [{ ID }] = req.params as [{ ID: string }]
+            const payment = await SELECT.one.from(Payments, ID)
+            if (!payment) return req.error(404, `Payment ${ID} not found.`)
+
+            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+            LOG.info(`🔄 [AI Re-validation] Starting AI re-validation for payment ${ID} (${payment.payer}, ${payment.amount} ${payment.currency})`)
+            const openItems = await loadOpenItems()
+            let references: string[] = []
+            if (Array.isArray(payment.references)) {
+                references = payment.references
+            } else if (typeof payment.references === 'string') {
+                try {
+                    const parsed = JSON.parse(payment.references)
+                    references = Array.isArray(parsed) ? parsed : [payment.references]
+                } catch {
+                    references = [payment.references]
+                }
+            }
+
+            let newScore: number = 0.30
+            let matchedItemId: string = ''
+            let matchStatus: 'full' | 'probable' | 'toBeChecked' | 'noMatch' = 'noMatch'
+            let rationale: string = ''
+
+            if (process.env.CASH_AI_ENABLED === 'true') {
+                LOG.info(`🤖 [AI Re-validation] Calling GenAI (${providerMode()}) to re-evaluate payment match and confidence...`)
+                const provider = await (await import('./genai/index.js')).getProvider()
+                const prompt = `You are an AI Cash Application Matching Agent in SAP.
+An operator has requested an AI re-validation of a payment against open ERP invoices.
+
+Payment details:
+- Payer: "${payment.payer}"
+- Amount: ${payment.amount} ${payment.currency}
+- Value Date: ${payment.valueDate}
+- References: ${references.length > 0 ? references.join(', ') : '(none)'}
+
+Available ERP Open Items:
+${openItems.map(item => `- Item: ${item.openItemId}, Customer: "${item.customerName}", Amount: ${item.invoiceAmount} ${item.invoiceAmountCurrency}, Status: ${item.clearingStatus}`).join('\n')}
+
+Analyze the payment and find the matching open item in ERP (if any).
+Assess a realistic confidence score between 0.00 and 1.00 (e.g. 0.95 for exact match, 0.70-0.85 for probable match, 0.10-0.30 if no match).
+Return ONLY a single valid JSON object (no markdown, no quotes around json):
+{
+  "confidence": number,
+  "matchedOpenItemId": string,
+  "matchStatus": "full" | "probable" | "toBeChecked" | "noMatch",
+  "rationale": string
+}`
+
+                try {
+                    const raw = await provider.generateText(prompt)
+                    const cleanJson = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
+                    const parsed = JSON.parse(cleanJson)
+                    newScore = typeof parsed.confidence === 'number' ? Math.round(parsed.confidence * 100) / 100 : 0.50
+                    matchedItemId = String(parsed.matchedOpenItemId || '').trim()
+                    matchStatus = parsed.matchStatus || (newScore >= 0.8 ? 'full' : (newScore >= 0.5 ? 'probable' : 'noMatch'))
+                    rationale = String(parsed.rationale || '')
+                    LOG.info(`🤖 [AI Re-validation] GenAI returned: confidence=${newScore}, match=${matchedItemId || '(none)'}, status=${matchStatus}`)
+                } catch (err) {
+                    LOG.warn(`[AI Re-validation] GenAI parsing error, falling back to deterministic matching: ${(err as Error).message}`)
+                }
+            }
+
+            // Fallback / deterministic evaluation if AI disabled or returned no item
+            if (!matchedItemId && process.env.CASH_AI_ENABLED !== 'true') {
+                const extracted: ExtractedPayment = {
+                    payer: payment.payer,
+                    amount: Number(payment.amount),
+                    currency: payment.currency,
+                    valueDate: payment.valueDate,
+                    references,
+                    extractionConfidence: Number(payment.extractionConfidence ?? 0),
+                }
+                const candidates = await proposeMatches(extracted, openItems)
+                const best = candidates.find(c => c.openItemId && c.matchStatus !== 'noMatch')
+                if (best) {
+                    matchedItemId = best.openItemId
+                    matchStatus = best.matchStatus
+                    newScore = best.matchStatus === 'full' ? 0.95 : (best.matchStatus === 'probable' ? 0.75 : 0.50)
+                    rationale = best.rationale
+                } else {
+                    newScore = 0.25
+                    matchStatus = 'noMatch'
+                    rationale = candidates[0]?.rationale || 'No matching open item found in ERP.'
+                }
+            }
+
+            const newStatus = newScore >= 0.8 ? 'matched' : 'needsReview'
+            const matchedItem = openItems.find(i => i.openItemId === matchedItemId)
+
+            // Replace proposed matches for this payment
+            await DELETE.from(ProposedMatches).where({ payment_ID: ID })
+            await INSERT.into(ProposedMatches).entries({
+                payment_ID: ID,
+                openItemId: matchedItemId || '(brak dopasowania)',
+                companyCode: matchedItem?.companyCode || '1000',
+                customerAccount: matchedItem?.customerAccount || '',
+                amount: matchedItem?.invoiceAmount || payment.amount,
+                currency: matchedItem?.invoiceAmountCurrency || payment.currency,
+                matchStatus,
+                matchScore: newScore,
+                reviewStatus: newStatus === 'matched' ? 'approved' : 'pending',
+                rationale: rationale || `AI rewalidacja: status ${matchStatus} z oceną ${newScore.toFixed(2)}.`,
+            })
+
+            const oldScore = Number(payment.extractionConfidence ?? 0).toFixed(2)
+            const updatedScore = Number(newScore).toFixed(2)
+            LOG.info(`💾 [AI Re-validation] Updating Payment ${ID}: confidence: ${oldScore} -> ${updatedScore}, status: "${payment.status}" -> "${newStatus}"`)
+
+            await UPDATE.entity(Payments, ID).with({
+                extractionConfidence: newScore,
+                status: newStatus,
+            })
+
+            LOG.info(`✅ [AI Re-validation] Completed for payment ${ID}`)
+            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+
+            const toastMsg = matchedItemId
+                ? `Rewalidacja AI (${payment.payer}): ocena ${updatedScore}, status: ${newStatus}, dopasowanie: ${matchedItemId}`
+                : `Rewalidacja AI (${payment.payer}): ocena ${updatedScore}, status: ${newStatus} (brak dopasowania)`
+            req.notify(toastMsg)
+
+            return SELECT.one.from(Payments, ID)
         })
 
         // Open Items browser: live S/4 read when enabled, honest 503 otherwise.
@@ -263,13 +441,19 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             const { ProposedMatches } = cds.entities('poc.cashapp')
             const [{ ID }] = req.params as [{ ID: string }]
             const match = await SELECT.one.from(ProposedMatches, ID)
-            if (!match) return req.error(404, `ProposedMatches ${ID} not found.`)
+            if (!match) {
+                LOG.warn(`[Review Action] ProposedMatches ${ID} not found.`)
+                return req.error(404, `ProposedMatches ${ID} not found.`)
+            }
+            LOG.info(`👤 [Review Action] Operator approving match ${ID} for open item ${match.openItemId} (${match.customerAccount}, ${match.amount} ${match.currency})`)
             if (process.env.CASH_S4_ENABLED !== 'true') {
+                LOG.warn(`[S/4 Clearing] S/4 posting is disabled (CASH_S4_ENABLED !== 'true'). Returning 503.`)
                 return req.error(503, 'S/4 posting is disabled. Set CASH_S4_ENABLED=true only after explicit approval.')
             }
 
             await UPDATE.entity(ProposedMatches, ID).with({ reviewStatus: 'approved' })
 
+            LOG.info(`🏦 [S/4 Clearing] Posting clearance document to S/4HANA for open item ${match.openItemId}...`)
             const [result] = await postClearing([{
                 openItemId: match.openItemId,
                 companyCode: match.companyCode,
@@ -279,20 +463,25 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             }])
             const failed = result.sapMessages.some((m: SapMessage) => m.numericSeverity >= SAP_MESSAGE_FAILURE_SEVERITY)
 
-            await UPDATE.entity(ProposedMatches, ID).with(failed
-                ? {
+            if (failed) {
+                const errorMsg = result.sapMessages.map((m: SapMessage) => `[${m.code}] ${m.message}`).join('; ')
+                    || 'Posting failed with no SAP message detail.'
+                LOG.error(`❌ [S/4 Clearing] Posting failed: ${errorMsg}`)
+                await UPDATE.entity(ProposedMatches, ID).with({
                     reviewStatus: 'approved',
                     postingId: null,
                     documentNumber: null,
-                    postingError: result.sapMessages.map((m: SapMessage) => `[${m.code}] ${m.message}`).join('; ')
-                        || 'Posting failed with no SAP message detail.',
-                }
-                : {
+                    postingError: errorMsg,
+                })
+            } else {
+                LOG.info(`✅ [S/4 Clearing] Posting succeeded! DocumentNumber: ${result.documentNumber}, PostingId: ${result.postingId}`)
+                await UPDATE.entity(ProposedMatches, ID).with({
                     reviewStatus: 'posted',
                     postingId: result.postingId,
                     documentNumber: result.documentNumber,
                     postingError: null,
                 })
+            }
 
             return SELECT.one.from(ProposedMatches, ID)
         })
@@ -301,9 +490,14 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             const { ProposedMatches } = cds.entities('poc.cashapp')
             const [{ ID }] = req.params as [{ ID: string }]
             const match = await SELECT.one.from(ProposedMatches, ID)
-            if (!match) return req.error(404, `ProposedMatches ${ID} not found.`)
+            if (!match) {
+                LOG.warn(`[Review Action] ProposedMatches ${ID} not found.`)
+                return req.error(404, `ProposedMatches ${ID} not found.`)
+            }
 
+            LOG.info(`👤 [Review Action] Operator rejecting match ${ID} for open item ${match.openItemId}`)
             await UPDATE.entity(ProposedMatches, ID).with({ reviewStatus: 'rejected' })
+            LOG.info(`✅ [Review Action] ProposedMatches ${ID} status set to "rejected"`)
 
             return SELECT.one.from(ProposedMatches, ID)
         })
@@ -313,10 +507,12 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         // rows so it shows up in the main list report (match IDs AI-VALID-*).
         this.on('validateSampleDocument', async () => {
             const samplePath = join(cds.root, SAMPLE_PDF_PATH)
+            LOG.info(`🧪 [Sample Validation] Starting validation of bundled fixture: ${samplePath}`)
             let pdfBytes: Buffer
             try {
                 pdfBytes = await readFile(samplePath)
             } catch {
+                LOG.error(`❌ [Sample Validation] Sample PDF not found at ${samplePath}`)
                 return `Sample PDF not found at ${samplePath}. Start the server from the project root (npm run dev).`
             }
 
@@ -356,6 +552,7 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 )
             }
 
+            LOG.info(`🏁 [Sample Validation] Completed! Stored ${rowsWritten} verdict(s) in MatchResult table.`)
             const references = payment.references.length > 0 ? payment.references.join(', ') : '(none)'
             return [
                 `Validation finished (provider: ${providerMode()}).`,

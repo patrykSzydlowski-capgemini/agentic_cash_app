@@ -178,15 +178,12 @@
                     "type": "ResponsiveTable",
                     "selectionMode": "Multi",
                     "selectAll": true
-                  }
-                }
-              },
-              "content": {
-                "header": {
+                  },
                   "actions": {
                     "uploadPayment": {
                       "press": "poc.cash.cashsyncui.ext.UploadPayment.onUploadPayment",
-                      "text": "Wgraj awizo (PDF)"
+                      "text": "Wgraj awizo (PDF)",
+                      "requiresSelection": false
                     }
                   }
                 }

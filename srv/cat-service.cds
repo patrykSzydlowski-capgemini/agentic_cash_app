@@ -35,6 +35,8 @@ service CashSyncService {
             when 'cleared'     then 3
             else 0
         end as StatusCriticality : Integer
+    } actions {
+        action reprocessWithAI() returns Payments;
     };
     @readonly entity ProposedMatches as projection on app.ProposedMatches {
         *,

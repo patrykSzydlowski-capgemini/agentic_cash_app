@@ -12,6 +12,16 @@ annotate service.Payments with @(
         status
     ],
     UI.LineItem : [
+        {
+            $Type  : 'UI.DataFieldForAction',
+            Action : 'CashSyncService.reprocessWithAI',
+            Label  : 'Rewaliduj z AI'
+        },
+        {
+            $Type  : 'UI.DataFieldForAction',
+            Action : 'CashSyncService.validateSampleDocument',
+            Label  : 'Waliduj Przykładowe Awizo (AI)'
+        },
         { $Type: 'UI.DataField', Value: payer,                Label: 'Płatnik' },
         { $Type: 'UI.DataField', Value: amount,               Label: 'Kwota' },
         { $Type: 'UI.DataField', Value: currency,             Label: 'Waluta' },
@@ -190,3 +200,19 @@ annotate service.MatchResult actions {
         }
     );
 };
+
+annotate service.Payments actions {
+    reprocessWithAI @(
+        Common.SideEffects : {
+            TargetProperties : [
+                'status',
+                'StatusCriticality',
+                'extractionConfidence'
+            ],
+            TargetEntities : [
+                'matches'
+            ]
+        }
+    );
+};
+

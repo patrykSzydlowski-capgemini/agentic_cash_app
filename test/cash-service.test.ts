@@ -153,3 +153,14 @@ test('uploadPayment rejects wrong-typed content at the OData layer (400)', async
     assert.equal(response.status, 400);
     assert.match(await response.text(), /not a valid LargeBinary/);
 });
+
+test('reprocessWithAI triggers matching agent on selected payment and updates status', async () => {
+    const id = '00000001-0000-0000-0000-000000000002';
+    const response = await post(`/Payments('${id}')/CashSyncService.reprocessWithAI`, {});
+    assert.equal(response.status, 200);
+    const updated = await response.json();
+    assert.equal(updated.ID, id);
+    assert.equal(updated.status, 'matched');
+    assert.equal(Number(updated.extractionConfidence), 0.95);
+});
+
