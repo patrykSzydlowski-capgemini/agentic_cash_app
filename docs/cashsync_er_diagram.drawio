@@ -1,0 +1,267 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/28.1.2 Chrome/138.0.7204.243 Electron/37.4.0 Safari/537.36" version="28.1.2">
+  <diagram name="CashSync ER Diagram" id="cashsync-erd">
+    <mxGraphModel dx="1240" dy="731" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="legend" value="Legend" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="10" y="10" width="220" height="106" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_1" value="S/4HANA (ABAP Cloud / RAP)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=28;fontSize=11;fillColor=#dae8fc;" parent="legend" vertex="1">
+          <mxGeometry y="26" width="220" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_2" value="BTP staging (agent-written)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=28;fontSize=11;fillColor=#d5e8d4;" parent="legend" vertex="1">
+          <mxGeometry y="52" width="220" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_3" value="Agent telemetry / config" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=28;fontSize=11;fillColor=#ffe6cc;" parent="legend" vertex="1">
+          <mxGeometry y="78" width="220" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="SOURCE_SYSTEM" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="30" y="736" width="220" height="106" as="geometry" />
+        </mxCell>
+        <mxCell id="e1_0" value="source_id (PK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=1;" parent="e1" vertex="1">
+          <mxGeometry y="26" width="220" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e1_1" value="source_name" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e1" vertex="1">
+          <mxGeometry y="46" width="220" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e1_2" value="category" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e1" vertex="1">
+          <mxGeometry y="66" width="220" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e1_3" value="connector_type" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e1" vertex="1">
+          <mxGeometry y="86" width="220" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="AGENT_DEFINITION" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="990" y="716" width="240" height="106" as="geometry" />
+        </mxCell>
+        <mxCell id="e2_0" value="agent_type_id (PK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=1;" parent="e2" vertex="1">
+          <mxGeometry y="26" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e2_1" value="agent_type" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e2" vertex="1">
+          <mxGeometry y="46" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e2_2" value="display_name" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e2" vertex="1">
+          <mxGeometry y="66" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e2_3" value="description" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e2" vertex="1">
+          <mxGeometry y="86" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="BANK_STATEMENT_LINE" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="30" y="330" width="240" height="166" as="geometry" />
+        </mxCell>
+        <mxCell id="e3_0" value="line_id (PK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=1;" parent="e3" vertex="1">
+          <mxGeometry y="26" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e3_1" value="source_id (FK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=2;" parent="e3" vertex="1">
+          <mxGeometry y="46" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e3_2" value="value_date" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e3" vertex="1">
+          <mxGeometry y="66" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e3_3" value="amount" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e3" vertex="1">
+          <mxGeometry y="86" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e3_4" value="payer_name" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e3" vertex="1">
+          <mxGeometry y="106" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e3_5" value="reference_text" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e3" vertex="1">
+          <mxGeometry y="126" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e3_6" value="raw_file_ref" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e3" vertex="1">
+          <mxGeometry y="146" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="REMITTANCE" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="330" y="716" width="240" height="146" as="geometry" />
+        </mxCell>
+        <mxCell id="e4_0" value="remittance_id (PK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=1;" parent="e4" vertex="1">
+          <mxGeometry y="26" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e4_1" value="source_id (FK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=2;" parent="e4" vertex="1">
+          <mxGeometry y="46" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e4_2" value="agent_run_id (FK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=2;" parent="e4" vertex="1">
+          <mxGeometry y="66" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e4_3" value="received_at" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e4" vertex="1">
+          <mxGeometry y="86" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e4_4" value="extraction_status" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e4" vertex="1">
+          <mxGeometry y="106" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e4_5" value="raw_file_ref" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e4" vertex="1">
+          <mxGeometry y="126" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="AGENT_RUN" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="970" y="520" width="260" height="186" as="geometry" />
+        </mxCell>
+        <mxCell id="e5_0" value="run_id (PK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=1;" parent="e5" vertex="1">
+          <mxGeometry y="26" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e5_1" value="agent_type_id (FK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=2;" parent="e5" vertex="1">
+          <mxGeometry y="46" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e5_2" value="batch_run_id" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e5" vertex="1">
+          <mxGeometry y="66" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e5_3" value="started_at" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e5" vertex="1">
+          <mxGeometry y="86" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e5_4" value="ended_at" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e5" vertex="1">
+          <mxGeometry y="106" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e5_5" value="status" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e5" vertex="1">
+          <mxGeometry y="126" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e5_6" value="records_processed" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e5" vertex="1">
+          <mxGeometry y="146" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e5_7" value="summary_message" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e5" vertex="1">
+          <mxGeometry y="166" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="REMITTANCE_ITEM" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="330" y="527" width="240" height="146" as="geometry" />
+        </mxCell>
+        <mxCell id="e6_0" value="item_id (PK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=1;" parent="e6" vertex="1">
+          <mxGeometry y="26" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e6_1" value="remittance_id (FK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=2;" parent="e6" vertex="1">
+          <mxGeometry y="46" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e6_2" value="invoice_id_extracted" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e6" vertex="1">
+          <mxGeometry y="66" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e6_3" value="vendor_name_extracted" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e6" vertex="1">
+          <mxGeometry y="86" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e6_4" value="amount_extracted" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e6" vertex="1">
+          <mxGeometry y="106" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e6_5" value="confidence" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e6" vertex="1">
+          <mxGeometry y="126" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="OPEN_ITEM" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="330" y="50" width="240" height="166" as="geometry" />
+        </mxCell>
+        <mxCell id="e7_0" value="open_item_id (PK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=1;" parent="e7" vertex="1">
+          <mxGeometry y="26" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e7_1" value="company_code" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e7" vertex="1">
+          <mxGeometry y="46" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e7_2" value="customer_account" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e7" vertex="1">
+          <mxGeometry y="66" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e7_3" value="customer_name" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e7" vertex="1">
+          <mxGeometry y="86" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e7_4" value="invoice_amount" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e7" vertex="1">
+          <mxGeometry y="106" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e7_5" value="currency" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e7" vertex="1">
+          <mxGeometry y="126" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e7_6" value="clearing_status" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e7" vertex="1">
+          <mxGeometry y="146" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="MATCH_RESULT" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="630" y="250" width="280" height="246" as="geometry" />
+        </mxCell>
+        <mxCell id="e8_0" value="match_id (PK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=1;" parent="e8" vertex="1">
+          <mxGeometry y="26" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e8_1" value="open_item_id (FK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=2;" parent="e8" vertex="1">
+          <mxGeometry y="46" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e8_2" value="bank_line_id (FK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=2;" parent="e8" vertex="1">
+          <mxGeometry y="66" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e8_3" value="remittance_item_id (FK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=2;" parent="e8" vertex="1">
+          <mxGeometry y="86" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e8_4" value="agent_run_id (FK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=2;" parent="e8" vertex="1">
+          <mxGeometry y="106" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e8_5" value="match_status" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e8" vertex="1">
+          <mxGeometry y="126" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e8_6" value="matched_amount" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e8" vertex="1">
+          <mxGeometry y="146" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e8_7" value="variance_amount" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e8" vertex="1">
+          <mxGeometry y="166" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e8_8" value="source_label" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e8" vertex="1">
+          <mxGeometry y="186" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e8_9" value="action_required" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e8" vertex="1">
+          <mxGeometry y="206" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e8_10" value="review_status" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e8" vertex="1">
+          <mxGeometry y="226" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="MANUAL_TASK" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" parent="1" vertex="1">
+          <mxGeometry x="670" y="50" width="240" height="146" as="geometry" />
+        </mxCell>
+        <mxCell id="e9_0" value="task_id (PK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=1;" parent="e9" vertex="1">
+          <mxGeometry y="26" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e9_1" value="match_id (FK)" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;fontStyle=2;" parent="e9" vertex="1">
+          <mxGeometry y="46" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e9_2" value="assigned_to" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e9" vertex="1">
+          <mxGeometry y="66" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e9_3" value="priority" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e9" vertex="1">
+          <mxGeometry y="86" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e9_4" value="status" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e9" vertex="1">
+          <mxGeometry y="106" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="e9_5" value="comments" style="text;html=1;align=left;verticalAlign=middle;spacingLeft=8;fontSize=11;" parent="e9" vertex="1">
+          <mxGeometry y="126" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ed1" value="provides" style="edgeStyle=entityRelationEdgeStyle;html=1;startArrow=ERone;startFill=0;endArrow=ERmany;endFill=0;rounded=0;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" parent="1" source="e1_0" target="e3_1" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="280" y="130" />
+              <mxPoint x="280" y="100" />
+              <mxPoint x="310" y="480" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ed2" value="provides" style="edgeStyle=entityRelationEdgeStyle;html=1;startArrow=ERone;startFill=0;endArrow=ERmany;endFill=0;rounded=0;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="e1_0" target="e4_1" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ed3" value="contains" style="edgeStyle=entityRelationEdgeStyle;html=1;startArrow=ERone;startFill=0;endArrow=ERmany;endFill=0;rounded=0;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0;entryDx=0;entryDy=0;" parent="1" source="e4_0" target="e6_1" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ed4" value="has" style="edgeStyle=entityRelationEdgeStyle;html=1;startArrow=ERone;startFill=0;endArrow=ERmany;endFill=0;rounded=0;fontSize=10;entryX=0;entryY=0.5;entryDx=0;entryDy=0;exitX=1;exitY=0.75;exitDx=0;exitDy=0;" parent="1" source="e7_0" target="e8_1" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ed5" value="matched via" style="edgeStyle=entityRelationEdgeStyle;html=1;startArrow=ERone;startFill=0;endArrow=ERzeroToOne;endFill=0;rounded=0;fontSize=10;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="e3_0" target="e8_2" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ed6" value="matched via" style="edgeStyle=entityRelationEdgeStyle;html=1;startArrow=ERone;startFill=0;endArrow=ERzeroToOne;endFill=0;rounded=0;fontSize=10;entryX=0;entryY=0.5;entryDx=0;entryDy=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" parent="1" source="e6_0" target="e8_1" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ed7" value="escalates to" style="edgeStyle=entityRelationEdgeStyle;html=1;startArrow=ERone;startFill=0;endArrow=ERzeroToOne;endFill=0;rounded=0;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" parent="1" source="e8_0" target="e9" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="880" y="520" />
+              <mxPoint x="890" y="470" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ed8" value="executes as" style="edgeStyle=entityRelationEdgeStyle;html=1;startArrow=ERone;startFill=0;endArrow=ERmany;endFill=0;rounded=0;fontSize=10;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="e2" target="e5_1" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ed9" value="produced" style="edgeStyle=entityRelationEdgeStyle;html=1;startArrow=ERone;startFill=0;endArrow=ERmany;endFill=0;rounded=0;fontSize=10;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.25;entryDx=0;entryDy=0;" parent="1" source="e5_0" target="e8_4" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ed10" value="extracted" style="edgeStyle=entityRelationEdgeStyle;html=1;startArrow=ERone;startFill=0;endArrow=ERmany;endFill=0;rounded=0;fontSize=10;" parent="1" source="e5_0" target="e4" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

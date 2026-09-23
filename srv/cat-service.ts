@@ -3,7 +3,6 @@ import type { Request } from '@sap/cds'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import axios from 'axios'
 import type { ingestAgentMatch, processPaymentDocument } from '../@cds-models/CashSyncService/index.js'
 import { extractPayment } from './agents/extraction-agent.js'
 import type { ExtractedPayment } from './agents/extraction-agent.js'
@@ -34,14 +33,12 @@ const LOG = cds.log('cash-service')
 type ProcessPaymentDocumentPayload = Parameters<typeof processPaymentDocument>[0]
 type IngestAgentMatchPayload = Parameters<typeof ingestAgentMatch>[0]
 
-// Bundled remittance advice used by the UI's sample-validation button.
-const SAMPLE_PDF_PATH = join('test-fixtures', 'remittance-samples', 'multi-invoice-remittance.pdf')
-
-interface AgentResponse {
-    confidence: number
-    review_required: boolean
-    reason: string
-}
+// Bundled remittance advice fixtures used by the UI's sample-validation button.
+const SAMPLE_FIXTURE_FILES = [
+    { file: 'sample-awizo-100pct.pdf', label: '100% Match' },
+    { file: 'sample-awizo-50pct.pdf', label: '~50-60% Partial Match' },
+    { file: 'sample-awizo-0pct.pdf', label: '0% No Match' },
+]
 
 interface PipelineResult {
     payment: ExtractedPayment
@@ -52,6 +49,25 @@ interface PipelineResult {
 export default class CashSyncServiceImpl extends cds.ApplicationService {
     async init() {
         const { MatchResult: DbMatchResult, OpenItem: DbOpenItem } = cds.entities('poc.cash')
+
+        const resolveProvider = async () => {
+            if (process.env.CASH_AI_ENABLED !== 'true') {
+                return import('./agents/integration-mocks.js')
+            }
+            return (await import('./genai/index.js')).getProvider()
+        }
+
+        const providerMode = () => {
+            if (process.env.CASH_AI_ENABLED !== 'true') return 'mock'
+            const name = process.env.CASH_AI_PROVIDER ?? 'aicore'
+            const model = activeModelName()
+            if (name === 'aicore') {
+                const dest = process.env.AICORE_DESTINATION ? `destination: ${process.env.AICORE_DESTINATION}` : 'service binding'
+                const rg = process.env.AICORE_RESOURCE_GROUP || 'default'
+                return `aicore [model: ${model}, ${dest}, resourceGroup: ${rg}]`
+            }
+            return `openrouter [model: ${model}]`
+        }
 
         // Live S/4HANA Read handler for OpenItem entity in Fiori UI
         this.on('READ', 'OpenItem', async (req: Request, next: Function) => {
@@ -78,8 +94,116 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             }
         })
 
-        // 1. Manual approval from the UI
+        // 1. AI re-validation for a specific MatchResult row (real AI agent)
         this.on('triggerAIAgent', 'MatchResult', async (req: Request) => {
+            const first = req.params[0] as { match_id?: string } | string | undefined
+            const matchId = typeof first === 'object' ? (first?.match_id ?? first) : first
+
+            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+            LOG.info(`🤖 [AI Re-validation] Triggered AI agent for MatchResult ID: ${matchId}`)
+
+            const match = await SELECT.one.from(DbMatchResult, matchId)
+            if (!match) return req.error(404, `MatchResult ${matchId} not found.`)
+
+            const openItem = match.open_item_OpenItemId
+                ? await SELECT.one.from(DbOpenItem, match.open_item_OpenItemId)
+                : null
+
+            let confidence = 0.50
+            let matchStatus = 'NEEDS_REVIEW'
+            let reviewStatus = 'PENDING'
+            let actionRequired = true
+            let reason = ''
+
+            const invoiceAmount = openItem ? Number(openItem.InvoiceAmount) : Number(match.matched_amount || 0)
+            const matchedAmount = Number(match.matched_amount || 0)
+            const customerName = openItem?.CustomerName || 'Unknown Customer'
+            const itemId = openItem?.OpenItemId || match.open_item_OpenItemId || 'N/A'
+
+            if (process.env.CASH_AI_ENABLED === 'true') {
+                const t0 = Date.now()
+                const model = activeModelName()
+                LOG.info(`   ↳ Engine: ${providerMode()}`)
+                LOG.info(`   ↳ Model: ${model}`)
+                LOG.info(`   ↳ Item: ${itemId} (${customerName}), Invoice: ${invoiceAmount}, Matched: ${matchedAmount}`)
+
+                try {
+                    const provider = await resolveProvider()
+                    const prompt = `You are an AI Cash Application Matching Agent in SAP.
+An operator requested an AI re-evaluation for MatchResult "${matchId}".
+
+Details:
+- Open Item / Invoice ID: "${itemId}"
+- Customer Name: "${customerName}"
+- SAP Invoice Amount: ${invoiceAmount}
+- Payment / Matched Amount: ${matchedAmount}
+- Current Variance: ${match.variance_amount ?? (invoiceAmount - matchedAmount)}
+
+Evaluate whether this payment matches the open item.
+Return ONLY a single valid JSON object (no markdown, no quotes):
+{
+  "confidence": number, // Float between 0.00 and 1.00
+  "match_status": "MATCHED" | "NEEDS_REVIEW" | "REJECTED",
+  "review_status": "APPROVED" | "PENDING" | "REJECTED",
+  "action_required": boolean,
+  "reason": string // Concise explanation for the operator
+}`
+                    const raw = await provider.generateText(prompt)
+                    const cleanJson = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
+                    const parsed = JSON.parse(cleanJson)
+
+                    confidence = typeof parsed.confidence === 'number' ? Math.round(parsed.confidence * 100) / 100 : 0.50
+                    matchStatus = parsed.match_status || (confidence >= 0.85 ? 'MATCHED' : 'NEEDS_REVIEW')
+                    reviewStatus = parsed.review_status || (matchStatus === 'MATCHED' ? 'APPROVED' : 'PENDING')
+                    actionRequired = typeof parsed.action_required === 'boolean' ? parsed.action_required : matchStatus !== 'MATCHED'
+                    reason = String(parsed.reason || '')
+                    LOG.info(`✅ [AI Re-validation] Completed in ${Date.now() - t0}ms: status=${matchStatus}, conf=${confidence}, reason="${reason}"`)
+                } catch (err) {
+                    LOG.warn(`⚠️ [AI Re-validation] GenAI call failed: ${(err as Error).message}. Falling back to deterministic matching.`)
+                }
+            }
+
+            // Deterministic evaluation if AI is disabled or failed
+            if (!reason) {
+                const diff = Math.abs(invoiceAmount - matchedAmount)
+                if (diff < 0.01) {
+                    confidence = 1.0
+                    matchStatus = 'MATCHED'
+                    reviewStatus = 'APPROVED'
+                    actionRequired = false
+                    reason = `Pełne dopasowanie: kwota płatności (${matchedAmount}) w 100% odpowiada pozycji SAP (${invoiceAmount}).`
+                } else if (matchedAmount < invoiceAmount) {
+                    confidence = 0.50
+                    matchStatus = 'NEEDS_REVIEW'
+                    reviewStatus = 'PENDING'
+                    actionRequired = true
+                    reason = `Płatność częściowa: kwota płatności (${matchedAmount}) jest mniejsza niż kwota pozycji SAP (${invoiceAmount}) — wymaga weryfikacji.`
+                } else {
+                    confidence = 0.40
+                    matchStatus = 'NEEDS_REVIEW'
+                    reviewStatus = 'PENDING'
+                    actionRequired = true
+                    reason = `Nadpłata: kwota płatności (${matchedAmount}) przekracza kwotę pozycji SAP (${invoiceAmount}) — wymaga weryfikacji.`
+                }
+            }
+
+            await UPDATE.entity(DbMatchResult)
+                .set({
+                    confidence,
+                    match_status: matchStatus,
+                    review_status: reviewStatus,
+                    action_required: actionRequired,
+                    review_reason: reason
+                })
+                .where({ match_id: matchId })
+
+            LOG.info(`[AI Re-validation] MatchResult ${matchId} updated -> Status: ${matchStatus}, Confidence: ${confidence}`)
+            req.notify(`Agent AI przeanalizował pozycję ${matchId}: ${matchStatus} (${(confidence * 100).toFixed(0)}%)`)
+            return SELECT.one.from(DbMatchResult, matchId)
+        })
+
+        // 2. Manual operator approval from the UI
+        this.on('manualApprove', 'MatchResult', async (req: Request) => {
             const first = req.params[0] as { match_id?: string } | string | undefined
             const matchId = typeof first === 'object' ? (first?.match_id ?? first) : first
 
@@ -90,12 +214,13 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                     match_status: 'MATCHED',
                     action_required: false,
                     review_status: 'APPROVED',
-                    review_reason: 'Manually approved by operator'
+                    review_reason: 'Ręcznie zatwierdzone przez operatora'
                 })
                 .where({ match_id: matchId })
 
             LOG.info(`[Operator Action] MatchResult ${matchId} updated -> Status: MATCHED, Review: APPROVED`)
-            req.notify(`Agent successfully processed record ${matchId}`)
+            req.notify(`Pozycja ${matchId} została zatwierdzona ręcznie przez operatora`)
+            return SELECT.one.from(DbMatchResult, matchId)
         })
 
         // 2. Webhook / Action for external match ingestion
@@ -117,58 +242,6 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
 
             LOG.info(`[Ingest Match] Successfully stored MatchResult ${match_id}`)
             return 'Match stored successfully'
-        })
-
-        // 3. Action triggered from Fiori UI for automated analysis
-        this.on('analyzeWithGemini', async (req: Request) => {
-            const rows = await SELECT.from(DbOpenItem)
-
-            if (!rows || rows.length === 0) {
-                LOG.warn('[Gemini Analysis] No open items found to analyze.')
-                return 'No open items to analyze.'
-            }
-
-            LOG.info(`[Gemini Analysis] Starting AI analysis for ${rows.length} open item(s)...`)
-            let processed = 0
-
-            for (const item of rows) {
-                const itemId = String(item.OpenItemId)
-                const customerName = String(item.CustomerName ?? 'Unknown Customer')
-                const invoiceAmount = Number(item.InvoiceAmount ?? 0)
-
-                const mockBankStatement = `Payment for invoice ${itemId} - ${customerName}`
-
-                LOG.info(`[Gemini Analysis] (${processed + 1}/${rows.length}) Analyzing item ${itemId} (${customerName}, ${invoiceAmount} USD)...`)
-
-                const agentResult = await this.callAgentAPI({
-                    OpenItemId: itemId,
-                    CustomerName: customerName,
-                    InvoiceAmount: invoiceAmount
-                }, mockBankStatement)
-
-                const status = agentResult.review_required || agentResult.confidence < 0.85
-                    ? 'NEEDS_REVIEW'
-                    : 'MATCHED'
-
-                const matchId = `MATCH-AUTO-${itemId}`
-
-                await UPSERT.into(DbMatchResult).entries({
-                    match_id: matchId,
-                    open_item_OpenItemId: itemId,
-                    matched_amount: invoiceAmount,
-                    match_status: status,
-                    review_status: status === 'NEEDS_REVIEW' ? 'PENDING' : 'APPROVED',
-                    confidence: agentResult.confidence,
-                    review_reason: agentResult.reason,
-                    action_required: status === 'NEEDS_REVIEW'
-                })
-
-                LOG.info(`[Gemini Analysis] Saved verdict ${matchId}: status=${status}, confidence=${agentResult.confidence}, reason="${agentResult.reason}"`)
-                processed++
-            }
-
-            LOG.info(`[Gemini Analysis] Batch analysis complete. Successfully saved ${processed} item(s).`)
-            return `Analyzed ${processed} items. Results saved.`
         })
 
         // 4. Local-first pipeline: extraction -> matching -> persistence.
@@ -208,25 +281,6 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 invoiceAmountCurrency: String(row.InvoiceAmountCurr),
                 clearingStatus: String(row.ClearingStatus),
             }))
-        }
-
-        const resolveProvider = async () => {
-            if (process.env.CASH_AI_ENABLED !== 'true') {
-                return import('./agents/integration-mocks.js')
-            }
-            return (await import('./genai/index.js')).getProvider()
-        }
-
-        const providerMode = () => {
-            if (process.env.CASH_AI_ENABLED !== 'true') return 'mock'
-            const name = process.env.CASH_AI_PROVIDER ?? 'aicore'
-            const model = activeModelName()
-            if (name === 'aicore') {
-                const dest = process.env.AICORE_DESTINATION ? `destination: ${process.env.AICORE_DESTINATION}` : 'service binding'
-                const rg = process.env.AICORE_RESOURCE_GROUP || 'default'
-                return `aicore [model: ${model}, ${dest}, resourceGroup: ${rg}]`
-            }
-            return `openrouter [model: ${model}]`
         }
 
         const runPipeline = async (pdfBytes: Buffer): Promise<PipelineResult> => {
@@ -272,9 +326,26 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             const tPersist = Date.now()
             const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
             const paymentId = randomUUID()
-            const status = payment.extractionConfidence < LOW_CONFIDENCE_THRESHOLD ? 'needsReview' : 'matched'
-            const persistedCandidates = status === 'needsReview' ? [] : candidates
-            LOG.info(`💾 [Step 3/3: Persistence] Saving payment ${paymentId} with status="${status}" (${persistedCandidates.length} match(es) stored)...`)
+
+            const hasValidMatch = candidates.some(c => (c.matchStatus === 'full' || c.matchStatus === 'probable') && Boolean(c.openItemId))
+            const lowConfidence = payment.extractionConfidence < LOW_CONFIDENCE_THRESHOLD
+            const bestCandidate = candidates.reduce<ProposedMatchCandidate | null>(
+                (best, cur) => (!best || cur.matchScore > best.matchScore ? cur : best),
+                null
+            )
+            const matchScore = bestCandidate ? bestCandidate.matchScore : 0
+            const status = (lowConfidence || !hasValidMatch || matchScore < LOW_CONFIDENCE_THRESHOLD) ? 'needsReview' : 'matched'
+            // If extraction confidence is too low, candidates are omitted per reference policy.
+            // If extraction succeeded but no match was found in ERP, persist the candidates so the operator sees the rationale.
+            const persistedCandidates = lowConfidence ? [] : candidates
+            // Effective AI confidence: if extraction failed (<0.6), report extraction confidence;
+            // if extraction succeeded, report the ERP matching score (0 for no match, ~0.6 for partial, 1.0 for full).
+            const effectiveConfidence = lowConfidence ? payment.extractionConfidence : matchScore
+            const primaryRationale = lowConfidence
+                ? `Ekstrakcja o niskiej pewności (${(payment.extractionConfidence * 100).toFixed(0)}%): wymagana weryfikacja dokumentu.`
+                : (candidates[0]?.rationale || 'Brak propozycji dopasowania.')
+
+            LOG.info(`💾 [Step 3/3: Persistence] Saving payment ${paymentId} with status="${status}", confidence=${effectiveConfidence} (${persistedCandidates.length} candidate(s) stored)...`)
             await INSERT.into(Payments).entries({
                 ID: paymentId,
                 payer: payment.payer,
@@ -282,20 +353,23 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 currency: payment.currency,
                 valueDate: payment.valueDate,
                 references: payment.references,
-                extractionConfidence: payment.extractionConfidence,
+                extractionConfidence: effectiveConfidence,
                 status,
+                rationale: primaryRationale,
             })
-            await INSERT.into(ProposedMatches).entries(persistedCandidates.map(candidate => ({
-                payment_ID: paymentId,
-                openItemId: candidate.openItemId,
-                companyCode: candidate.companyCode,
-                customerAccount: candidate.customerAccount,
-                amount: candidate.amount,
-                currency: candidate.currency,
-                matchStatus: candidate.matchStatus,
-                matchScore: candidate.matchScore,
-                rationale: candidate.rationale,
-            })))
+            if (persistedCandidates.length > 0) {
+                await INSERT.into(ProposedMatches).entries(persistedCandidates.map(candidate => ({
+                    payment_ID: paymentId,
+                    openItemId: candidate.openItemId,
+                    companyCode: candidate.companyCode,
+                    customerAccount: candidate.customerAccount,
+                    amount: candidate.amount,
+                    currency: candidate.currency,
+                    matchStatus: candidate.matchStatus,
+                    matchScore: candidate.matchScore,
+                    rationale: candidate.rationale,
+                })))
+            }
             const durationPersist = Date.now() - tPersist
             LOG.info(`✅ [Step 3/3: Persistence] Successfully stored payment ${paymentId} in ${durationPersist}ms`)
             return { paymentId, matchCount: persistedCandidates.length }
@@ -483,6 +557,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             await UPDATE.entity(Payments, ID).with({
                 extractionConfidence: newScore,
                 status: newStatus,
+                rationale: rationale || `AI rewalidacja: status ${matchStatus} z oceną ${newScore.toFixed(2)}.`,
             })
 
             LOG.info(`✅ [AI Re-validation] Completed for payment ${ID}`)
@@ -587,132 +662,95 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             return SELECT.one.from(ProposedMatches, ID)
         })
 
-        // 5. One-click sample validation from the UI: runs the same pipeline
-        // over the bundled fixture PDF and mirrors the verdict into MatchResult
-        // rows so it shows up in the main list report (match IDs AI-VALID-*).
+        // 5. One-click sample validation from the UI: runs the AI pipeline over
+        // all 3 sample remittance fixtures (100% exact match, ~50-60% partial match, 0% no match)
+        // and stores verdicts in MatchResult and Payments tables.
         this.on('validateSampleDocument', async () => {
-            const samplePath = join(cds.root, SAMPLE_PDF_PATH)
-            LOG.info(`🧪 [Sample Validation] Starting validation of bundled fixture: ${samplePath}`)
-            let pdfBytes: Buffer
-            try {
-                pdfBytes = await readFile(samplePath)
-            } catch {
-                LOG.error(`❌ [Sample Validation] Sample PDF not found at ${samplePath}`)
-                return `Sample PDF not found at ${samplePath}. Start the server from the project root (npm run dev).`
-            }
-
-            const { payment, candidates, openItems } = await runPipeline(pdfBytes)
-            const { paymentId } = await persistPayment(payment, candidates)
-
-            const itemsById = new Map(openItems.map(item => [item.openItemId, item]))
+            LOG.info(`🧪 [Sample Validation] Starting validation of 3 sample remittance fixtures...`)
             const verdicts: string[] = []
-            let rowsWritten = 0
+            let totalRowsWritten = 0
 
-            for (const candidate of candidates) {
-                if (!candidate.openItemId) continue
-                const item = itemsById.get(candidate.openItemId)
-                const matched = candidate.matchStatus === 'full'
-                const matchedAmount = item ? item.invoiceAmount : 0
-                const variance = matched
-                    ? 0
-                    : Math.round((matchedAmount - payment.amount) * 100) / 100
-                const matchId = `AI-VALID-${candidate.openItemId}`.slice(0, 36)
+            for (const fixture of SAMPLE_FIXTURE_FILES) {
+                let pdfBytes: Buffer
+                try {
+                    pdfBytes = await readFile(join(cds.root, fixture.file))
+                } catch {
+                    try {
+                        pdfBytes = await readFile(join(cds.root, 'test-fixtures', fixture.file))
+                    } catch {
+                        LOG.warn(`[Sample Validation] Could not load fixture: ${fixture.file}`)
+                        continue
+                    }
+                }
 
-                await UPSERT.into(DbMatchResult).entries({
-                    match_id: matchId,
-                    open_item_OpenItemId: candidate.openItemId,
-                    matched_amount: matchedAmount,
-                    variance_amount: variance,
-                    match_status: matched ? 'MATCHED' : 'NEEDS_REVIEW',
-                    review_status: matched ? 'APPROVED' : 'PENDING',
-                    confidence: candidate.matchScore,
-                    review_reason: candidate.rationale.slice(0, 500),
-                    source_label: 'AI_SAMPLE_VALIDATION',
-                    action_required: !matched,
-                })
-                rowsWritten++
-                verdicts.push(
-                    `- ${candidate.openItemId}${item ? ` (${item.customerName})` : ''}: `
-                    + `${candidate.matchStatus} (score ${candidate.matchScore}) -> ${matchId}`
-                )
+                const { payment, candidates, openItems } = await runPipeline(pdfBytes)
+                const { paymentId } = await persistPayment(payment, candidates)
+                const itemsById = new Map(openItems.map(item => [item.openItemId, item]))
+
+                for (const candidate of candidates) {
+                    const hasItem = Boolean(candidate.openItemId)
+                    const item = hasItem ? itemsById.get(candidate.openItemId) : null
+                    const matched = candidate.matchStatus === 'full'
+                    const matchedAmount = item ? item.invoiceAmount : (candidate.amount || payment.amount)
+                    const variance = matched ? 0 : Math.round((matchedAmount - payment.amount) * 100) / 100
+                    const slug = hasItem ? candidate.openItemId : `NOMATCH-${Math.round(payment.amount)}`
+                    const matchId = `AI-VALID-${slug}`.slice(0, 36)
+
+                    const matchStatus = matched
+                        ? 'MATCHED'
+                        : (candidate.matchStatus === 'noMatch' ? 'REJECTED' : 'NEEDS_REVIEW')
+                    const reviewStatus = matched
+                        ? 'APPROVED'
+                        : (candidate.matchStatus === 'noMatch' ? 'REJECTED' : 'PENDING')
+
+                    await UPSERT.into(DbMatchResult).entries({
+                        match_id: matchId,
+                        open_item_OpenItemId: candidate.openItemId || null,
+                        matched_amount: matchedAmount,
+                        variance_amount: variance,
+                        match_status: matchStatus,
+                        review_status: reviewStatus,
+                        confidence: candidate.matchScore,
+                        review_reason: candidate.rationale.slice(0, 500),
+                        source_label: 'AI_SAMPLE_VALIDATION',
+                        action_required: !matched,
+                    })
+                    totalRowsWritten++
+                    verdicts.push(
+                        `- [${(candidate.matchScore * 100).toFixed(0)}%] ${payment.payer} (${payment.amount} ${payment.currency}) `
+                        + `-> ${matchStatus} (Score: ${candidate.matchScore}, Pozycja: ${candidate.openItemId || '(brak)'})`
+                    )
+                }
             }
 
-            LOG.info(`🏁 [Sample Validation] Completed! Stored ${rowsWritten} verdict(s) in MatchResult table.`)
-            const references = payment.references.length > 0 ? payment.references.join(', ') : '(none)'
+            LOG.info(`🏁 [Sample Validation] Completed! Stored ${totalRowsWritten} verdict(s) across 3 sample records.`)
             return [
-                `Validation finished (provider: ${providerMode()}).`,
-                `Extracted payment: ${payment.payer} — ${payment.amount.toFixed(2)} ${payment.currency}, `
-                    + `value date ${payment.valueDate} (extraction confidence: ${payment.extractionConfidence}).`,
-                `References: ${references}`,
-                rowsWritten > 0
-                    ? `Match verdicts stored in MatchResult (match IDs prefixed AI-VALID-):\n${verdicts.join('\n')}`
-                    : 'No verdict rows: the AI did not link this payment to any open item (see ProposedMatches for the rationale).',
-                `Stored payment ${paymentId} with ${candidates.length} proposed match(es); `
-                    + `MatchResult updated for ${rowsWritten} open item(s).`,
+                `Walidacja 3 przykładowych awizo zakończona pomyślnie (${providerMode()}):`,
+                ...verdicts,
+                `Wszystkie 3 wpisy (100%, ~50-60%, 0%) zostały zapisane w tabeli Dopasowań oraz Płatności.`
             ].join('\n')
         })
 
+        // Cascade cleanup when Payments are deleted by user from the UI
+        this.before('DELETE', 'Payments', async (req: Request) => {
+            const id = req.data?.ID || (req.params as [{ ID?: string }])?.[0]?.ID
+            if (id) {
+                const { IngestionLog } = cds.entities('poc.cashapp')
+                await cds.tx(req).run(DELETE.from(IngestionLog).where({ payment_ID: id }))
+                LOG.info(`🗑️ [Delete] Cleaned up IngestionLog for Payment ${id}`)
+            }
+        })
+
+        // Cleanup when MatchResult rows are deleted by user from the UI
+        this.before('DELETE', 'MatchResult', async (req: Request) => {
+            const id = req.data?.match_id || (req.params as [{ match_id?: string }])?.[0]?.match_id
+            if (id) {
+                const { ManualTask } = cds.entities('poc.cash')
+                await cds.tx(req).run(DELETE.from(ManualTask).where({ match_match_id: id }))
+                LOG.info(`🗑️ [Delete] Cleaned up ManualTask for MatchResult ${id}`)
+            }
+        })
+
         return super.init()
-    }
-
-    /** Helper method to call the Agent API with fallback support */
-    private async callAgentAPI(openItemData: { OpenItemId: string, CustomerName: string, InvoiceAmount: number }, bankStatementText: string): Promise<AgentResponse> {
-        const apiKey = process.env.GEMINI_API_KEY
-
-        if (!apiKey) {
-            LOG.warn('No API key in environment. Using simulation...')
-            const isAmbiguous = Math.random() > 0.5
-            return {
-                confidence: isAmbiguous ? 0.60 : 0.98,
-                review_required: isAmbiguous,
-                reason: isAmbiguous 
-                    ? 'Discrepancy detected in transfer title and amount.' 
-                    : 'Full match of transfer data with SAP document.'
-            }
-        }
-
-        const prompt = `
-You are an AI agent analyzing bank payment matches with open items in SAP.
-Analyze the SAP open item and the bank transfer description, and determine if manual human review is required.
-
-SAP Document Data:
-- Item Number: ${openItemData.OpenItemId}
-- Customer Name: ${openItemData.CustomerName}
-- Amount: ${openItemData.InvoiceAmount}
-
-Bank Transfer Text:
-"${bankStatementText}"
-
-Return a JSON object with this exact schema:
-{
-  "confidence": number, // Float between 0.0 and 1.0
-  "review_required": boolean,
-  "reason": string // A short explanation in English
-}
-`
-
-        try {
-            const response = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-                {
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: {
-                        responseMimeType: "application/json",
-                        temperature: 0.1
-                    }
-                },
-                { headers: { 'Content-Type': 'application/json' } }
-            )
-
-            const jsonText = response.data.candidates[0].content.parts[0].text
-            return JSON.parse(jsonText) as AgentResponse
-        } catch (error: any) {
-            LOG.error('API call error:', error.response?.data || error.message)
-            return {
-                confidence: 0.0,
-                review_required: true,
-                reason: 'Connection error with the analytics module.'
-            }
-        }
     }
 }

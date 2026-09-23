@@ -116,7 +116,8 @@ sap.ui.define([
 				name: 'remittance',
 				fileType: ['pdf'],
 				mimeType: ['application/pdf'],
-				placeholder: 'Wybierz awizo PDF…',
+				multiple: true,
+				placeholder: 'Wybierz jedno lub więcej awizo PDF…',
 				width: '100%'
 			});
 			oUploadDialog = new Dialog({
@@ -124,7 +125,7 @@ sap.ui.define([
 				content: new VBox({
 					items: [
 						oFileUploader,
-						new Text({ text: 'Plik trafia do akcji uploadPayment i przechodzi pełny pipeline AI.' })
+						new Text({ text: 'Możesz wybrać kilka plików PDF naraz (np. 3 pliki). Każdy dokument zostanie przeanalizowany przez pipeline AI i zapisany w kolejce.' })
 					]
 				}),
 				beginButton: new Button({
@@ -157,6 +158,21 @@ sap.ui.define([
 		oUploadDialog.open();
 	}
 
+	function readFileAsBase64(oFile) {
+		return new Promise(function (resolve, reject) {
+			var oReader = new FileReader();
+			oReader.onload = function (oLoadEvent) {
+				var sDataUrl = oLoadEvent.target.result;
+				var sBase64 = String(sDataUrl).split(',')[1] || '';
+				resolve({ name: oFile.name, base64: sBase64 });
+			};
+			oReader.onerror = function () {
+				reject(new Error('Nie udało się odczytać pliku: ' + oFile.name));
+			};
+			oReader.readAsDataURL(oFile);
+		});
+	}
+
 	function onUploadConfirm(oModel) {
 		if (!oModel) {
 			oModel = _oActiveModel || findModel(null, null, null);
@@ -169,48 +185,73 @@ sap.ui.define([
 			|| (oFileUploader.oFileUpload && oFileUploader.oFileUpload.files);
 
 		if (!oFiles || oFiles.length === 0) {
-			MessageToast.show('Wybierz plik PDF.');
+			MessageToast.show('Wybierz co najmniej jeden plik PDF.');
 			return;
 		}
-		var oFile = oFiles[0];
-		var oReader = new FileReader();
-		oReader.onload = function (oLoadEvent) {
-			var sDataUrl = oLoadEvent.target.result;
-			var sBase64 = String(sDataUrl).split(',')[1] || '';
-			invokeUploadPayment(oModel, oFile.name, sBase64);
-		};
-		oReader.onerror = function () {
-			MessageBox.error('Nie udało się odczytać pliku.');
-		};
-		oReader.readAsDataURL(oFile);
+
+		var aFiles = Array.prototype.slice.call(oFiles);
+		var oBusy = new BusyDialog({
+			title: 'Przetwarzanie dokumentów…',
+			text: 'Odczytywanie ' + aFiles.length + ' plik(ów)…'
+		});
+		oBusy.open();
+		oUploadDialog.close();
+
+		Promise.all(aFiles.map(readFileAsBase64)).then(function (aFileContents) {
+			processFilesSequentially(oModel, aFileContents, oBusy);
+		}).catch(function (oError) {
+			oBusy.close();
+			MessageBox.error((oError && oError.message) || 'Błąd podczas odczytu plików.');
+		});
 	}
 
-	function invokeUploadPayment(oModel, sFileName, sBase64) {
+	function processFilesSequentially(oModel, aFileContents, oBusy) {
 		if (!oModel) {
+			oBusy.close();
 			MessageBox.error('Brak modelu OData — odśwież stronę.');
 			return;
 		}
-		var oBusy = new BusyDialog({ title: 'Przetwarzanie…', text: 'AI analizuje dokument…' });
-		oBusy.open();
-		oUploadDialog.close();
-		var oContext = oModel.bindContext('/uploadPayment(...)');
-		oContext.setParameter('fileName', sFileName);
-		oContext.setParameter('fileContent', sBase64);
-		oContext.execute().then(function () {
-			oBusy.close();
-			var oBound = oContext.getBoundContext && oContext.getBoundContext();
-			var oResult = oBound && oBound.getObject ? oBound.getObject() : null;
-			MessageToast.show('Zapisano płatność ' + (oResult && oResult.ID ? oResult.ID : ''));
-			if (_oExtensionAPI && typeof _oExtensionAPI.refresh === 'function') {
-				_oExtensionAPI.refresh();
-			} else if (oModel.refresh) {
-				oModel.refresh();
+
+		var aSuccesses = [];
+		var aErrors = [];
+
+		function processNext(i) {
+			if (i >= aFileContents.length) {
+				oBusy.close();
+				var sSummary = 'Pomyślnie przetworzono ' + aSuccesses.length + ' z ' + aFileContents.length + ' dokumentów.';
+				if (aErrors.length > 0) {
+					MessageBox.warning(sSummary + '\n\nBłędy (' + aErrors.length + '):\n- ' + aErrors.join('\n- '));
+				} else {
+					MessageToast.show(sSummary);
+				}
+				if (_oExtensionAPI && typeof _oExtensionAPI.refresh === 'function') {
+					_oExtensionAPI.refresh();
+				} else if (oModel.refresh) {
+					oModel.refresh();
+				}
+				return;
 			}
-		}).catch(function (oError) {
-			oBusy.close();
-			var sMessage = (oError && oError.message) || 'Wgrywanie nie powiodło się.';
-			MessageBox.error(sMessage);
-		});
+
+			var oItem = aFileContents[i];
+			oBusy.setText('AI analizuje dokument ' + (i + 1) + ' z ' + aFileContents.length + ' (' + oItem.name + ')…');
+
+			var oContext = oModel.bindContext('/uploadPayment(...)');
+			oContext.setParameter('fileName', oItem.name);
+			oContext.setParameter('fileContent', oItem.base64);
+
+			oContext.execute().then(function () {
+				var oBound = oContext.getBoundContext && oContext.getBoundContext();
+				var oResult = oBound && oBound.getObject ? oBound.getObject() : null;
+				aSuccesses.push(oItem.name + (oResult && oResult.ID ? ' (' + oResult.ID + ')' : ''));
+				processNext(i + 1);
+			}).catch(function (oError) {
+				var sErrMsg = (oError && oError.message) || 'Błąd przetwarzania';
+				aErrors.push(oItem.name + ': ' + sErrMsg);
+				processNext(i + 1);
+			});
+		}
+
+		processNext(0);
 	}
 
 	return {

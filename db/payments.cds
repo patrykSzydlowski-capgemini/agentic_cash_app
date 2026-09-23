@@ -14,6 +14,7 @@ entity Payments : cuid, managed {
   // decisions (e.g. routing to review) belong to the service layer.
   extractionConfidence : Decimal(3, 2);
   status     : String enum { extracted; matched; cleared; needsReview; } default 'extracted';
+  rationale  : LargeString;
   matches    : Composition of many ProposedMatches on matches.payment = $self;
   // FE-native Object Page tabs (UI.ReferenceFacet): each to-many nav prop
   // renders as a tab with its own LineItem table, no custom nav buttons.

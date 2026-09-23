@@ -86,6 +86,17 @@ test('triggerAIAgent updates the selected match and returns notification', async
     assert.equal(match.review_status, 'APPROVED');
 });
 
+test('manualApprove approves the selected match and sets manual review reason', async () => {
+    const path = "/MatchResult('MATCH-002')";
+    const response = await post(path + '/CashSyncService.manualApprove', {});
+    assert.match(response.headers.get('sap-messages') ?? '', /MATCH-002/);
+    const match = await get(path);
+    assert.equal(match.match_status, 'MATCHED');
+    assert.equal(match.action_required, false);
+    assert.equal(match.review_status, 'APPROVED');
+    assert.match(match.review_reason, /Ręcznie/);
+});
+
 for (const confidence of [0.81, 0.8, 0.79]) {
     test(`ingestAgentMatch preserves confidence threshold at ${confidence}`, async () => {
         const id = `TS-${confidence}`;

@@ -18,15 +18,14 @@ service CashSyncService {
             else 0
         end as CriticalityCode : Integer
     } actions {
-        action triggerAIAgent() returns String;
+        action triggerAIAgent() returns MatchResult;
+        action manualApprove()  returns MatchResult;
     };
 
-    entity RemittanceItem as projection on my.RemittanceItem;
-    entity AgentRun       as projection on my.AgentRun;
     entity ManualTask     as projection on my.ManualTask;
 
     // Imported ts-agentic-poc workflow (extraction -> matching -> review).
-    @readonly entity Payments as projection on app.Payments {
+    entity Payments as projection on app.Payments {
         *,
         case status
             when 'matched'     then 3
@@ -38,7 +37,7 @@ service CashSyncService {
     } actions {
         action reprocessWithAI() returns Payments;
     };
-    @readonly entity ProposedMatches as projection on app.ProposedMatches {
+    entity ProposedMatches as projection on app.ProposedMatches {
         *,
         case reviewStatus
             when 'posted'   then 3
@@ -80,9 +79,6 @@ service CashSyncService {
     // the bundled fixture PDF and stores the verdict in Payments/ProposedMatches
     // plus MatchResult rows visible in the main list report.
     action validateSampleDocument() returns String;
-
-    // Akcja wywołująca Gemini 1.5 Flash do analizy pozycji
-    action analyzeWithGemini() returns String;
 
     action ingestAgentMatch(
         match_id: String,

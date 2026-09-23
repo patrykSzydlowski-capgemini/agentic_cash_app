@@ -1,7 +1,7 @@
-// Agent 3 (Matching) — see CLAUDE.md §Architecture. Takes a structured
+// Agent 3 (Matching): takes a structured
 // payment (Agent 2's output) and the customer's open items, and returns
 // proposed matches with a status and rationale. Does not write to S/4 or
-// decide to post — that's srv/cash-app-service.ts, after human approval.
+// decide to post — that's after human approval.
 //
 // Deterministic scoring (amount/reference comparison) handles the clear
 // cases entirely in code, with no LLM call. The LLM is only invoked for the
@@ -58,7 +58,7 @@ function scoreSingleReferencedItem(payment: ExtractedPayment, item: OpenItem): P
       companyCode: item.companyCode,
       ...carriedFields(item),
       matchStatus: 'toBeChecked',
-      matchScore: 0.3,
+      matchScore: 0.5,
       rationale: `Open item ${item.openItemId} is referenced in the payment, but its currency (${item.invoiceAmountCurrency}) differs from the payment's (${payment.currency}) — needs manual review.`,
     };
   }
@@ -82,17 +82,18 @@ function scoreSingleReferencedItem(payment: ExtractedPayment, item: OpenItem): P
       ...carriedFields(item),
       matchStatus: 'toBeChecked',
       matchScore: 0.5,
-      rationale: `Open item ${item.openItemId} is referenced in the payment, but the payment amount (${payment.amount.toFixed(2)} ${payment.currency}) is only ${pct}% of the open item's amount (${item.invoiceAmount.toFixed(2)} ${item.invoiceAmountCurrency}) — looks like a partial payment, not a full match.`,
+      rationale: `Open item ${item.openItemId} is referenced in the payment, but the payment amount (${payment.amount.toFixed(2)} ${payment.currency}) is only ${pct}% of the open item's amount (${item.invoiceAmount.toFixed(2)} ${item.invoiceAmountCurrency}) — looks like a partial payment (${pct}%), not a full match.`,
     };
   }
 
+  const pct = ((payment.amount / item.invoiceAmount) * 100).toFixed(0);
   return {
     openItemId: item.openItemId,
     companyCode: item.companyCode,
     ...carriedFields(item),
     matchStatus: 'toBeChecked',
-    matchScore: 0.4,
-    rationale: `Open item ${item.openItemId} is referenced in the payment, but the payment amount (${payment.amount.toFixed(2)} ${payment.currency}) exceeds the open item's amount (${item.invoiceAmount.toFixed(2)} ${item.invoiceAmountCurrency}) — needs manual review.`,
+    matchScore: 0.5,
+    rationale: `Open item ${item.openItemId} is referenced in the payment, but the payment amount (${payment.amount.toFixed(2)} ${payment.currency}) is ${pct}% of the open item's amount (${item.invoiceAmount.toFixed(2)} ${item.invoiceAmountCurrency}) — payment exceeds open item (${pct}%), looks like an overpayment, not a full match.`,
   };
 }
 
@@ -118,7 +119,7 @@ function scoreMultiItemReferenced(payment: ExtractedPayment, items: OpenItem[]):
     companyCode: item.companyCode,
     ...carriedFields(item),
     matchStatus: 'toBeChecked' as const,
-    matchScore: 0.4,
+    matchScore: 0.5,
     rationale: `Payment references multiple open items (${ids}), but their amounts sum to ${sumDescription}, which does not match the payment amount of ${payment.amount.toFixed(2)} ${payment.currency} — needs manual review.`,
   }));
 }
@@ -246,7 +247,7 @@ export async function proposeMatches(
   complete: typeof generateText = generateText,
 ): Promise<ProposedMatchCandidate[]> {
   // Open items already being handled elsewhere are excluded entirely, not
-  // just deprioritized — see CLAUDE.md's note on ClearingStatus vs matchStatus.
+  // just deprioritized.
   const eligibleItems = openItems.filter((item) => item.clearingStatus !== 'IN PROCESS');
 
   const referencedItems = eligibleItems.filter((item) => referencesContainId(payment.references, item.openItemId));

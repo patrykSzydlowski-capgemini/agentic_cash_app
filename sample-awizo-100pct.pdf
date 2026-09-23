@@ -1,0 +1,66 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 680 >>
+stream
+
+BT
+/F2 16 Tf 20 TL
+50 780 Td (REMITTANCE ADVICE / AWIZO PLATNICZE - EXACT MATCH 100%) Tj T*
+ET
+BT
+/F1 10 Tf 14 TL
+50 740 Td (Payer / Platnik: Customer1 Manufacturing Ltd.) Tj T*
+(Address: Industrial Park 12, 60-001 Poznan, Poland) Tj T*
+(Date: 2026-02-15) Tj T*
+(Payment Method: Electronic Wire Transfer) Tj T*
+(Payment Reference: WIRE-2026-0123456789) Tj T*
+ET
+
+BT
+/F2 10 Tf 12 TL
+50 660 Td (Invoice Number: 0123456789) Tj T*
+(Invoice Date: 2026-01-01) Tj T*
+(Gross Amount: 1,000.00 EUR) Tj T*
+(Paid Amount: 1,000.00 EUR) Tj T*
+ET
+
+BT
+/F2 12 Tf 14 TL
+50 580 Td (TOTAL PAID: EUR 1,000.00) Tj T*
+ET
+BT
+/F1 9 Tf 12 TL
+50 540 Td (Settlement of invoice 0123456789 in full.) Tj T*
+ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000000982 00000 n 
+0000001052 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1127
+%%EOF

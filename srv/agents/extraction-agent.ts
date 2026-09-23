@@ -1,4 +1,4 @@
-// Agent 2 (Extraction) — see CLAUDE.md §Architecture. Takes a raw remittance
+// Agent 2 (Extraction): takes a raw remittance
 // PDF and returns structured payment data. Does not look at open items or
 // make matching decisions (that's Agent 3, srv/agents/matching-agent.ts).
 

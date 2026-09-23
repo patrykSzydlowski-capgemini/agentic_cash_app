@@ -1,6 +1,9 @@
 using CashSyncService as service from '../../srv/cat-service';
 
 annotate service.Payments with @(
+    Capabilities.DeleteRestrictions : { Deletable : true },
+    Capabilities.InsertRestrictions : { Insertable : false },
+    Capabilities.UpdateRestrictions : { Updatable : false },
     UI.HeaderInfo : {
         TypeName       : 'Płatność',
         TypeNamePlural : 'Kolejka Dopasowań',
@@ -27,7 +30,8 @@ annotate service.Payments with @(
         { $Type: 'UI.DataField', Value: currency,             Label: 'Waluta' },
         { $Type: 'UI.DataField', Value: valueDate,            Label: 'Data' },
         { $Type: 'UI.DataField', Value: extractionConfidence, Label: 'Pewność AI' },
-        { $Type: 'UI.DataField', Value: status,               Criticality: StatusCriticality, Label: 'Status' }
+        { $Type: 'UI.DataField', Value: status,               Criticality: StatusCriticality, Label: 'Status' },
+        { $Type: 'UI.DataField', Value: rationale,            Label: 'Uzasadnienie AI' }
     ],
     UI.FieldGroup #PaymentDetails : {
         $Type : 'UI.FieldGroupType',
@@ -37,7 +41,8 @@ annotate service.Payments with @(
             { $Type: 'UI.DataField', Value: currency,             Label: 'Waluta' },
             { $Type: 'UI.DataField', Value: valueDate,            Label: 'Data Waluty' },
             { $Type: 'UI.DataField', Value: extractionConfidence, Label: 'Pewność AI' },
-            { $Type: 'UI.DataField', Value: status,               Label: 'Status' }
+            { $Type: 'UI.DataField', Value: status,               Label: 'Status' },
+            { $Type: 'UI.DataField', Value: rationale,            Label: 'Uzasadnienie AI' }
         ]
     },
     UI.Facets : [
@@ -66,6 +71,9 @@ annotate service.Payments with @(
 );
 
 annotate service.ProposedMatches with @(
+    Capabilities.DeleteRestrictions : { Deletable : true },
+    Capabilities.InsertRestrictions : { Insertable : false },
+    Capabilities.UpdateRestrictions : { Updatable : false },
     UI.HeaderInfo : {
         TypeName       : 'Dopasowanie',
         TypeNamePlural : 'Proponowane Dopasowania',
@@ -156,6 +164,9 @@ annotate service.OpenItem with @(
 
 // MatchResult list: review-action buttons restored with multi-selection support.
 annotate service.MatchResult with @(
+    Capabilities.DeleteRestrictions : { Deletable : true },
+    Capabilities.InsertRestrictions : { Insertable : false },
+    Capabilities.UpdateRestrictions : { Updatable : false },
     UI.HeaderInfo : {
         TypeName       : 'Dopasowanie',
         TypeNamePlural : 'Dopasowania Płatności',
@@ -167,21 +178,21 @@ annotate service.MatchResult with @(
         action_required
     ],
     UI.LineItem : [
-        {
-            $Type  : 'UI.DataFieldForAction',
-            Action : 'CashSyncService.analyzeWithGemini',
-            Label  : 'Uruchom Analizę AI'
-        },
         { $Type: 'UI.DataField', Value: match_id,                Label: 'ID Dopasowania' },
         { $Type: 'UI.DataField', Value: open_item.OpenItemId,    Label: 'ID Pozycji SAP' },
         { $Type: 'UI.DataField', Value: open_item.CustomerName,  Label: 'Klient' },
         { $Type: 'UI.DataField', Value: matched_amount,          Label: 'Dopasowana Kwota' },
         { $Type: 'UI.DataField', Value: confidence,              Label: 'Pewność AI' },
         { $Type: 'UI.DataField', Value: match_status,            Criticality: CriticalityCode, Label: 'Status' },
-        { $Type: 'UI.DataField', Value: review_reason,           Label: 'Analiza Gemini AI' },
+        { $Type: 'UI.DataField', Value: review_reason,           Label: 'Uzasadnienie AI' },
         {
             $Type  : 'UI.DataFieldForAction',
             Action : 'CashSyncService.triggerAIAgent',
+            Label  : 'Rewaliduj z AI'
+        },
+        {
+            $Type  : 'UI.DataFieldForAction',
+            Action : 'CashSyncService.manualApprove',
             Label  : 'Zatwierdź Ręcznie'
         }
     ]
@@ -189,6 +200,18 @@ annotate service.MatchResult with @(
 
 annotate service.MatchResult actions {
     triggerAIAgent @(
+        Common.SideEffects : {
+            TargetProperties : [
+                'confidence',
+                'match_status',
+                'action_required',
+                'review_status',
+                'review_reason',
+                'CriticalityCode'
+            ]
+        }
+    );
+    manualApprove @(
         Common.SideEffects : {
             TargetProperties : [
                 'match_status',
@@ -207,7 +230,8 @@ annotate service.Payments actions {
             TargetProperties : [
                 'status',
                 'StatusCriticality',
-                'extractionConfidence'
+                'extractionConfidence',
+                'rationale'
             ],
             TargetEntities : [
                 'matches'

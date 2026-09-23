@@ -10,7 +10,6 @@
     "@sap-cloud-sdk/connectivity": "^4.9.1",
     "@sap-cloud-sdk/http-client": "^4.9.1",
     "@sap/cds": "^10.1.0",
-    "axios": "^1.20.0",
     "express": "^4",
     "imapflow": "^2.0.5",
     "mailparser": "^3.9.28",
