@@ -14,6 +14,16 @@ import { getOpenItems as getLiveOpenItems } from './s4/open-items-client.js'
 import { postClearing, type SapMessage } from './s4/clearing-client.js'
 import { activeModelName } from './genai/index.js'
 
+if (!process.env.VCAP_SERVICES) {
+    try {
+        // @ts-expect-error @sap/xsenv does not bundle type declarations
+        const xsenv = (await import('@sap/xsenv')).default
+        xsenv.loadEnv()
+    } catch {
+        // ignore if default-env.json missing
+    }
+}
+
 // Below this extractionConfidence the Matching Agent is skipped entirely
 // rather than run on shaky data, and the payment goes straight to needsReview.
 // 0.6 mirrors the reference ts-agentic-poc policy; revisit with usage data.
@@ -42,6 +52,31 @@ interface PipelineResult {
 export default class CashSyncServiceImpl extends cds.ApplicationService {
     async init() {
         const { MatchResult: DbMatchResult, OpenItem: DbOpenItem } = cds.entities('poc.cash')
+
+        // Live S/4HANA Read handler for OpenItem entity in Fiori UI
+        this.on('READ', 'OpenItem', async (req: Request, next: Function) => {
+            if (process.env.CASH_S4_ENABLED !== 'true') {
+                return next()
+            }
+            try {
+                const liveItems = await getLiveOpenItems()
+                LOG.info(`[OpenItem READ] Returning ${liveItems.length} live item(s) from S/4HANA`)
+                return liveItems.map(item => ({
+                    OpenItemId: item.openItemId,
+                    CompanyCode: item.companyCode,
+                    CustomerAccount: item.customerAccount,
+                    CustomerName: item.customerName,
+                    InvoiceAmount: item.invoiceAmount,
+                    InvoiceAmountCurr: item.invoiceAmountCurrency,
+                    ClearingStatus: item.clearingStatus,
+                    PostingDate: item.postingDate,
+                    DocumentDate: item.documentDate,
+                }))
+            } catch (err) {
+                LOG.warn(`[OpenItem READ] Failed to fetch from S/4HANA, falling back to SQLite: ${(err as Error).message}`)
+                return next()
+            }
+        })
 
         // 1. Manual approval from the UI
         this.on('triggerAIAgent', 'MatchResult', async (req: Request) => {
@@ -145,6 +180,21 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             if (process.env.CASH_S4_ENABLED === 'true') {
                 const liveItems = await getLiveOpenItems()
                 LOG.info(`[ERP Open Items] Loaded ${liveItems.length} open item(s) from S/4HANA`)
+                try {
+                    await UPSERT.into(DbOpenItem).entries(liveItems.map(item => ({
+                        OpenItemId: item.openItemId,
+                        CompanyCode: item.companyCode,
+                        CustomerAccount: item.customerAccount,
+                        CustomerName: item.customerName,
+                        InvoiceAmount: item.invoiceAmount,
+                        InvoiceAmountCurr: item.invoiceAmountCurrency,
+                        ClearingStatus: item.clearingStatus,
+                        PostingDate: item.postingDate,
+                        DocumentDate: item.documentDate,
+                    })))
+                } catch (e) {
+                    LOG.warn(`[ERP Open Items] Cache sync to SQLite warning: ${(e as Error).message}`)
+                }
                 return liveItems
             }
             const rows = await SELECT.from(DbOpenItem)

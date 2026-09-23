@@ -38,6 +38,15 @@ export type HttpPost = (url: string, body: unknown) => Promise<unknown>
 
 async function defaultHttpPost(url: string, body: unknown): Promise<unknown> {
     if (process.env.CASH_S4_ENABLED !== 'true') throw new Error('S/4 posting is disabled. Set CASH_S4_ENABLED=true only after explicit approval.')
+    if (!process.env.VCAP_SERVICES) {
+        try {
+            // @ts-expect-error @sap/xsenv does not bundle type declarations
+            const xsenv = (await import('@sap/xsenv')).default
+            xsenv.loadEnv()
+        } catch {
+            // ignore
+        }
+    }
     const { executeHttpRequest } = await import('@sap-cloud-sdk/http-client')
     const response = await executeHttpRequest(
         { destinationName: process.env.S4_DESTINATION_NAME ?? 'HD0_BAS' },
