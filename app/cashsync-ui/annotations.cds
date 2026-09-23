@@ -144,9 +144,7 @@ annotate service.OpenItem with @(
     ]
 );
 
-// MatchResult list retained (existing seed + validateSampleDocument verdict
-// rows stay visible); review-action buttons removed from the UI — the
-// triggerAIAgent/analyzeWithGemini handlers stay in the API.
+// MatchResult list: review-action buttons restored with multi-selection support.
 annotate service.MatchResult with @(
     UI.HeaderInfo : {
         TypeName       : 'Dopasowanie',
@@ -159,12 +157,36 @@ annotate service.MatchResult with @(
         action_required
     ],
     UI.LineItem : [
+        {
+            $Type  : 'UI.DataFieldForAction',
+            Action : 'CashSyncService.analyzeWithGemini',
+            Label  : 'Uruchom Analizę AI'
+        },
         { $Type: 'UI.DataField', Value: match_id,                Label: 'ID Dopasowania' },
         { $Type: 'UI.DataField', Value: open_item.OpenItemId,    Label: 'ID Pozycji SAP' },
         { $Type: 'UI.DataField', Value: open_item.CustomerName,  Label: 'Klient' },
         { $Type: 'UI.DataField', Value: matched_amount,          Label: 'Dopasowana Kwota' },
         { $Type: 'UI.DataField', Value: confidence,              Label: 'Pewność AI' },
         { $Type: 'UI.DataField', Value: match_status,            Criticality: CriticalityCode, Label: 'Status' },
-        { $Type: 'UI.DataField', Value: review_reason,           Label: 'Analiza Gemini AI' }
+        { $Type: 'UI.DataField', Value: review_reason,           Label: 'Analiza Gemini AI' },
+        {
+            $Type  : 'UI.DataFieldForAction',
+            Action : 'CashSyncService.triggerAIAgent',
+            Label  : 'Zatwierdź Ręcznie'
+        }
     ]
 );
+
+annotate service.MatchResult actions {
+    triggerAIAgent @(
+        Common.SideEffects : {
+            TargetProperties : [
+                'match_status',
+                'action_required',
+                'review_status',
+                'review_reason',
+                'CriticalityCode'
+            ]
+        }
+    );
+};

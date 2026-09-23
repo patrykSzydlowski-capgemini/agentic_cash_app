@@ -134,7 +134,9 @@
               "controlConfiguration": {
                 "@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
-                    "type": "ResponsiveTable"
+                    "type": "ResponsiveTable",
+                    "selectionMode": "Multi",
+                    "selectAll": true
                   }
                 }
               }
@@ -173,7 +175,9 @@
               "controlConfiguration": {
                 "@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
-                    "type": "ResponsiveTable"
+                    "type": "ResponsiveTable",
+                    "selectionMode": "Multi",
+                    "selectAll": true
                   }
                 }
               },
@@ -198,7 +202,16 @@
           "options": {
             "settings": {
               "editableHeaderContent": false,
-              "contextPath": "/Payments"
+              "contextPath": "/Payments",
+              "controlConfiguration": {
+                "matches/@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable",
+                    "selectionMode": "Multi",
+                    "selectAll": true
+                  }
+                }
+              }
             }
           },
           "controlAggregation": "midColumnPages"
