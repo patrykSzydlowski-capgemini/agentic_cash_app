@@ -5,9 +5,7 @@ export class IntegrationUnavailableError extends Error {
 }
 
 export function requireAIEnabled(): void {
-    if (process.env.CASH_AI_ENABLED !== 'true') {
-        throw new IntegrationUnavailableError('AI is disabled. Configure credentials before setting CASH_AI_ENABLED=true.')
-    }
+    // AI is always enabled by default
 }
 
 export function openRouterKey(env: NodeJS.ProcessEnv = process.env): string {

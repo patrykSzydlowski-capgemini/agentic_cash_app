@@ -39,7 +39,6 @@ test('provider defaults to SAP AI Core and rejects unknown values', () => {
 })
 
 test('SAP orchestration adapter passes text and PDF messages through injected client', async () => {
-    process.env.CASH_AI_ENABLED = 'true'
     const inputs: unknown[] = []
     const factory: ClientFactory = async () => ({
         chatCompletion: async input => {
@@ -53,7 +52,6 @@ test('SAP orchestration adapter passes text and PDF messages through injected cl
 })
 
 test('SAP orchestration adapter sanitizes SDK errors and supports config overrides', async () => {
-    process.env.CASH_AI_ENABLED = 'true'
     process.env.AICORE_MODEL = 'custom-model'
     process.env.AICORE_RESOURCE_GROUP = 'custom-group'
     assert.deepEqual(orchestrationConfig(), { model: 'custom-model', resourceGroup: 'custom-group' })

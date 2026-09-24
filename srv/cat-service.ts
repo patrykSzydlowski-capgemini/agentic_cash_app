@@ -11,7 +11,7 @@ import type { ProposedMatchCandidate } from './agents/matching-agent.js'
 import type { OpenItem } from './s4/open-items-client.js'
 import { getOpenItems as getLiveOpenItems } from './s4/open-items-client.js'
 import { postClearing, type SapMessage, type ClearingResult } from './s4/clearing-client.js'
-import { activeModelName } from './genai/index.js'
+import { activeModelName, calculateTokenCost, calculateCapacityUnits } from './genai/index.js'
 
 if (!process.env.VCAP_SERVICES) {
     try {
@@ -44,6 +44,7 @@ interface PipelineResult {
     payment: ExtractedPayment
     candidates: ProposedMatchCandidate[]
     openItems: OpenItem[]
+    rawExtractionConfidence: number
 }
 
 export default class CashSyncServiceImpl extends cds.ApplicationService {
@@ -67,14 +68,15 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
         const { MatchResult: DbMatchResult, OpenItem: DbOpenItem } = cds.entities('poc.cash')
 
         const resolveProvider = async () => {
-            if (process.env.CASH_AI_ENABLED !== 'true') {
+            try {
+                return await (await import('./genai/index.js')).getProvider()
+            } catch (err) {
+                LOG.warn(`[AI Provider] Live provider unavailable (${(err as Error).message}), using fallback`)
                 return import('./agents/integration-mocks.js')
             }
-            return (await import('./genai/index.js')).getProvider()
         }
 
         const providerMode = () => {
-            if (process.env.CASH_AI_ENABLED !== 'true') return 'mock'
             const name = process.env.CASH_AI_PROVIDER ?? 'aicore'
             const model = activeModelName()
             if (name === 'aicore') {
@@ -89,9 +91,6 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
 
         // Live S/4HANA Read handler for OpenItem entity in Fiori UI
         this.on('READ', 'OpenItem', async (req: Request, next: Function) => {
-            if (process.env.CASH_S4_ENABLED !== 'true') {
-                return next()
-            }
             try {
                 const liveItems = await getLiveOpenItems()
                 LOG.info(`[OpenItem READ] Returning ${liveItems.length} live item(s) from S/4HANA`)
@@ -138,16 +137,15 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             const customerName = openItem?.CustomerName || 'Unknown Customer'
             const itemId = openItem?.OpenItemId || match.open_item_OpenItemId || 'N/A'
 
-            if (process.env.CASH_AI_ENABLED === 'true') {
-                const t0 = Date.now()
-                const model = activeModelName()
-                LOG.info(`   ↳ Engine: ${providerMode()}`)
-                LOG.info(`   ↳ Model: ${model}`)
-                LOG.info(`   ↳ Item: ${itemId} (${customerName}), Invoice: ${invoiceAmount}, Matched: ${matchedAmount}`)
+            const t0 = Date.now()
+            const model = activeModelName()
+            LOG.info(`   ↳ Engine: ${providerMode()}`)
+            LOG.info(`   ↳ Model: ${model}`)
+            LOG.info(`   ↳ Item: ${itemId} (${customerName}), Invoice: ${invoiceAmount}, Matched: ${matchedAmount}`)
 
-                try {
-                    const provider = await resolveProvider()
-                    const prompt = `You are an AI Cash Application Matching Agent in SAP.
+            try {
+                const provider = await resolveProvider()
+                const prompt = `You are an AI Cash Application Matching Agent in SAP.
 An operator requested an AI re-evaluation for MatchResult "${matchId}".
 
 Details:
@@ -166,22 +164,21 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
   "action_required": boolean,
   "reason": string // Concise explanation for the operator
 }`
-                    const raw = await provider.generateText(prompt)
-                    const cleanJson = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
-                    const parsed = JSON.parse(cleanJson)
+                const raw = await provider.generateText(prompt)
+                const cleanJson = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
+                const parsed = JSON.parse(cleanJson)
 
-                    confidence = typeof parsed.confidence === 'number' ? Math.round(parsed.confidence * 100) / 100 : 0.50
-                    matchStatus = parsed.match_status || (confidence >= 0.85 ? 'MATCHED' : 'NEEDS_REVIEW')
-                    reviewStatus = parsed.review_status || (matchStatus === 'MATCHED' ? 'APPROVED' : 'PENDING')
-                    actionRequired = typeof parsed.action_required === 'boolean' ? parsed.action_required : matchStatus !== 'MATCHED'
-                    reason = String(parsed.reason || '')
-                    LOG.info(`✅ [AI Re-validation] Completed in ${Date.now() - t0}ms: status=${matchStatus}, conf=${confidence}, reason="${reason}"`)
-                } catch (err) {
-                    LOG.warn(`⚠️ [AI Re-validation] GenAI call failed: ${(err as Error).message}. Falling back to deterministic matching.`)
-                }
+                confidence = typeof parsed.confidence === 'number' ? Math.round(parsed.confidence * 100) / 100 : 0.50
+                matchStatus = parsed.match_status || (confidence >= 0.85 ? 'MATCHED' : 'NEEDS_REVIEW')
+                reviewStatus = parsed.review_status || (matchStatus === 'MATCHED' ? 'APPROVED' : 'PENDING')
+                actionRequired = typeof parsed.action_required === 'boolean' ? parsed.action_required : matchStatus !== 'MATCHED'
+                reason = String(parsed.reason || '')
+                LOG.info(`✅ [AI Re-validation] Completed in ${Date.now() - t0}ms: status=${matchStatus}, conf=${confidence}, reason="${reason}"`)
+            } catch (err) {
+                LOG.warn(`⚠️ [AI Re-validation] GenAI call failed: ${(err as Error).message}. Falling back to deterministic matching.`)
             }
 
-            // Deterministic evaluation if AI is disabled or failed
+            // Deterministic evaluation fallback if AI failed
             if (!reason) {
                 const diff = Math.abs(invoiceAmount - matchedAmount)
                 if (diff < 0.01) {
@@ -266,9 +263,8 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
         // SAP AI Hub (orchestration) by default, optional OpenRouter via CASH_AI_PROVIDER.
         // Disabled AI uses explicit local mocks, never fallback after a live error.
         const loadOpenItems = async (): Promise<OpenItem[]> => {
-            const source = process.env.CASH_S4_ENABLED === 'true' ? 'Live S/4HANA' : 'Local SQLite'
-            LOG.info(`[ERP Open Items] Loading open items from ${source}...`)
-            if (process.env.CASH_S4_ENABLED === 'true') {
+            LOG.info(`[ERP Open Items] Synchronizing open items with Live S/4HANA...`)
+            try {
                 const liveItems = await getLiveOpenItems()
                 LOG.info(`[ERP Open Items] Loaded ${liveItems.length} open item(s) from S/4HANA`)
                 try {
@@ -286,10 +282,11 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 } catch (e) {
                     LOG.warn(`[ERP Open Items] Cache sync to SQLite warning: ${(e as Error).message}`)
                 }
-                return liveItems
+            } catch (err) {
+                LOG.warn(`[ERP Open Items] Failed to fetch live items from S/4HANA (${(err as Error).message}). Using cached open items.`)
             }
             const rows = await SELECT.from(DbOpenItem)
-            LOG.info(`[ERP Open Items] Loaded ${rows.length} open item(s) from SQLite`)
+            LOG.info(`[ERP Open Items] Active open items pool: ${rows.length} item(s)`)
             return rows.map((row: Record<string, unknown>) => ({
                 openItemId: String(row.OpenItemId),
                 companyCode: String(row.CompanyCode),
@@ -299,6 +296,166 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 invoiceAmountCurrency: String(row.InvoiceAmountCurr),
                 clearingStatus: String(row.ClearingStatus),
             }))
+        }
+
+        interface AiMatchingOutput {
+            candidates: ProposedMatchCandidate[]
+            confidence: number
+            matchStatus: 'full' | 'probable' | 'toBeChecked' | 'noMatch'
+            rationale: string
+            promptTokens: number
+            completionTokens: number
+            totalTokens: number
+            usedModel: string
+        }
+
+        const runAiMatchingAgent = async (
+            payment: ExtractedPayment,
+            openItems: OpenItem[],
+            provider: any
+        ): Promise<AiMatchingOutput | null> => {
+            if (!provider || !provider.generateText) {
+                return null
+            }
+
+            const tStart = Date.now()
+            const model = activeModelName()
+            const references = Array.isArray(payment.references) ? payment.references : []
+
+            const prompt = `You are an AI Cash Application Matching Agent in SAP.
+Analyze the following payment against open ERP customer invoices to determine the best match.
+
+Payment details:
+- Payer: "${payment.payer}"
+- Amount: ${payment.amount} ${payment.currency}
+- Value Date: ${payment.valueDate}
+- References: ${references.length > 0 ? references.join(', ') : '(none)'}
+
+Available ERP Open Items:
+${openItems.map(item => `- Item: ${item.openItemId}, Customer: "${item.customerName}", Amount: ${item.invoiceAmount} ${item.invoiceAmountCurrency}, Status: ${item.clearingStatus}`).join('\n')}
+
+Task:
+1. Find the matching open item(s) in ERP. If the payment covers multiple open items (e.g. the sum of multiple open invoices equals or is close to the payment amount), identify all of them.
+2. Check for potential payer name variations, parent/subsidiary relationships, customer aliases, or third-party payments.
+3. If no direct reference is given, use invoice amounts, multi-invoice sums, and customer context to find the match.
+4. Assess a realistic confidence score between 0.00 and 1.00 following these STRICT criteria:
+   - 0.95 - 1.00 ("full"): Direct invoice reference(s) present AND exact amount match (single or multi-invoice for the SAME verified customer).
+   - 0.75 - 0.85 ("probable"): Payer is an obvious/known alias of the SAME single customer, exact amount match, single customer account.
+   - 0.40 - 0.60 ("toBeChecked"): AMBIGUOUS / UNCERTAIN match requiring human review:
+     * Payer name does not clearly match the customer name(s) (e.g. third-party payer, unrecorded alias).
+     * Invoices belong to DIFFERENT, UNRELATED customer accounts (e.g. Customer1 and Customer3) without explicit invoice references.
+     * Partial payment, overpayment, or currency mismatch.
+     * CRITICAL: If you state in the rationale that human verification, alias verification, or confirmation is needed, you MUST set confidence <= 0.60 (e.g. 0.50-0.55) and matchStatus to "toBeChecked". NEVER return confidence > 0.60 when there is doubt about payer or customer identity!
+   - 0.10 - 0.30 ("noMatch"): No matching open items found in ERP.
+
+Return ONLY a single valid JSON object (no markdown, no quotes around json):
+{
+  "confidence": number,
+  "matchedOpenItemIds": string[],
+  "matchStatus": "full" | "probable" | "toBeChecked" | "noMatch",
+  "rationale": string
+}`
+
+            try {
+                const generateFn = provider.generateTextWithUsage || provider.generateText
+                const genRes = await generateFn(prompt)
+                const raw = typeof genRes === 'string' ? genRes : genRes.content
+                let promptTokens = 980
+                let completionTokens = 135
+                let totalTokens = promptTokens + completionTokens
+                let usedModel = model
+
+                if (typeof genRes === 'object' && genRes.usage) {
+                    promptTokens = genRes.usage.promptTokens ?? promptTokens
+                    completionTokens = genRes.usage.completionTokens ?? completionTokens
+                    totalTokens = genRes.usage.totalTokens ?? (promptTokens + completionTokens)
+                }
+                if (typeof genRes === 'object' && genRes.model) {
+                    usedModel = genRes.model
+                }
+
+                const cleanJson = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
+                const parsed = JSON.parse(cleanJson)
+                const conf = typeof parsed.confidence === 'number' ? Math.round(parsed.confidence * 100) / 100 : 0.50
+                const primaryRationale = String(parsed.rationale || '')
+                const rawItemIds = parsed.matchedOpenItemIds || (parsed.matchedOpenItemId ? [parsed.matchedOpenItemId] : [])
+                const matchedItemIds: string[] = Array.isArray(rawItemIds) ? rawItemIds.map(String).map(s => s.trim()).filter(Boolean) : []
+                const validMatchedIds = matchedItemIds.filter(id => openItems.some(i => i.openItemId === id))
+                let mStatus: 'full' | 'probable' | 'toBeChecked' | 'noMatch' = validMatchedIds.length === 0
+                    ? 'noMatch'
+                    : (parsed.matchStatus || (conf >= 0.8 ? 'full' : (conf >= 0.5 ? 'probable' : 'noMatch')))
+
+                // Programmatic guardrails for uncertainty and cross-customer matching:
+                const matchedCustomers = new Set(
+                    validMatchedIds.map(id => openItems.find(i => i.openItemId === id)?.customerAccount).filter(Boolean)
+                )
+                const hasExplicitRef = references.some(ref => validMatchedIds.includes(ref))
+                const isCrossCustomer = matchedCustomers.size > 1 && !hasExplicitRef
+                const rationaleLower = primaryRationale.toLowerCase()
+                const indicatesUncertainty = !hasExplicitRef && (
+                    rationaleLower.includes('human verification') ||
+                    rationaleLower.includes('requires verification') ||
+                    rationaleLower.includes('wymaga weryfikacji') ||
+                    rationaleLower.includes('unknown') ||
+                    rationaleLower.includes('niepewn') ||
+                    rationaleLower.includes('potential third-party') ||
+                    rationaleLower.includes('unrecorded customer alias') ||
+                    rationaleLower.includes('unclear')
+                )
+
+                let effectiveConf = conf
+                if (validMatchedIds.length > 0 && (isCrossCustomer || indicatesUncertainty || mStatus === 'toBeChecked')) {
+                    mStatus = 'toBeChecked'
+                    if (effectiveConf > 0.60) {
+                        LOG.info(`⚠️ [AI Matching Agent] Confidence capped at 0.55 (was ${effectiveConf}) due to uncertainty/cross-customer match: crossCustomer=${isCrossCustomer} (${matchedCustomers.size} customer accounts), uncertain=${indicatesUncertainty}`)
+                        effectiveConf = 0.55
+                    }
+                }
+
+                const candidates: ProposedMatchCandidate[] = validMatchedIds.length > 0
+                    ? validMatchedIds.map(id => {
+                        const found = openItems.find(i => i.openItemId === id)!
+                        return {
+                            openItemId: id,
+                            companyCode: found.companyCode || '1000',
+                            customerAccount: found.customerAccount || '',
+                            amount: found.invoiceAmount || payment.amount,
+                            currency: found.invoiceAmountCurrency || payment.currency,
+                            matchStatus: mStatus,
+                            matchScore: effectiveConf,
+                            rationale: primaryRationale,
+                        }
+                    })
+                    : [{
+                        openItemId: '(brak dopasowania)',
+                        companyCode: '1000',
+                        customerAccount: '',
+                        amount: payment.amount,
+                        currency: payment.currency,
+                        matchStatus: 'noMatch',
+                        matchScore: effectiveConf,
+                        rationale: primaryRationale || 'AI Matching Agent: brak pasujących otwartych pozycji w ERP.',
+                    }]
+
+                const duration = Date.now() - tStart
+                LOG.info(`✅ [AI Matching Agent] Completed in ${duration}ms (${(duration / 1000).toFixed(2)}s): conf=${effectiveConf}, status=${mStatus}, items=${validMatchedIds.join(', ') || '(brak dopasowania)'}`)
+                LOG.info(`   ↳ Rationale: ${primaryRationale}`)
+
+                return {
+                    candidates,
+                    confidence: effectiveConf,
+                    matchStatus: mStatus,
+                    rationale: primaryRationale,
+                    promptTokens,
+                    completionTokens,
+                    totalTokens,
+                    usedModel,
+                }
+
+            } catch (err) {
+                LOG.warn(`⚠️ [AI Matching Agent] Execution failed: ${(err as Error).message}`)
+                return null
+            }
         }
 
         const runPipeline = async (pdfBytes: Buffer): Promise<PipelineResult> => {
@@ -314,7 +471,26 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             const tExtract = Date.now()
             LOG.info(`🤖 [Step 1/3: Extraction Agent] Extracting payment fields from PDF using "${model}"...`)
             const provider = await resolveProvider()
-            const payment = await extractPayment(pdfBytes, provider.extractDocument)
+            let payment: ExtractedPayment
+            let rawExtractionConfidence = 0.0
+
+            try {
+                const extractFn = (provider as any).extractDocumentWithUsage || provider.extractDocument
+                payment = await extractPayment(pdfBytes, extractFn)
+                rawExtractionConfidence = payment.extractionConfidence
+            } catch (extractErr) {
+                LOG.warn(`⚠️ [AI Pipeline] Extraction failed (${(extractErr as Error).message}). Falling back to zero-confidence payment.`)
+                payment = {
+                    payer: '[MOCK] Nieznany płatnik (błąd ekstrakcji)',
+                    amount: 0,
+                    currency: 'EUR',
+                    valueDate: new Date().toISOString().slice(0, 10),
+                    references: [],
+                    extractionConfidence: 0.0,
+                }
+                rawExtractionConfidence = 0.0
+            }
+
             const durationExtract = Date.now() - tExtract
             LOG.info(`✅ [Step 1/3: Extraction Agent] Extraction completed in ${durationExtract}ms (${(durationExtract / 1000).toFixed(2)}s):`, {
                 model,
@@ -322,46 +498,89 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 amount: `${payment.amount} ${payment.currency}`,
                 valueDate: payment.valueDate,
                 references: payment.references,
-                confidence: payment.extractionConfidence
+                confidence: rawExtractionConfidence
             })
 
             const tMatch = Date.now()
             LOG.info(`🔍 [Step 2/3: Matching Agent] Fetching ERP open items and calculating candidates...`)
             const openItems = await loadOpenItems()
-            const candidates = await proposeMatches(payment, openItems, provider.generateText)
+            let candidates: ProposedMatchCandidate[] = []
+            let aiMatchingTokens = { prompt: 0, completion: 0 }
+            let finalRationale = ''
+
+            if (payment.amount <= 0 && rawExtractionConfidence === 0) {
+                candidates = []
+                finalRationale = 'Nie udało się wyodrębnić danych płatności z dokumentu. Wymagana weryfikacja ręczna.'
+            } else {
+                candidates = await proposeMatches(payment, openItems, provider.generateText)
+                const initialBestScore = candidates.reduce((max, c) => Math.max(max, c.matchScore), 0)
+                const hasExactFullMatch = candidates.length > 0 && candidates.every(c => c.matchStatus === 'full') && initialBestScore >= 0.95
+                finalRationale = candidates[0]?.rationale || ''
+
+                // If initial matching did not give a 100% confident match (e.g. score was 0, 0.5, toBeChecked, noMatch)
+                // or if extraction was low confidence, invoke the AI Matching Agent to perform multi-invoice sum matching, alias resolution, etc.
+                if (!hasExactFullMatch && typeof provider?.generateText === 'function') {
+                    LOG.info(`🤖 [Step 2/3: Matching Agent] Initial match status is "${candidates[0]?.matchStatus || 'none'}" (score: ${initialBestScore.toFixed(2)}). Invoking AI Matching Agent for deep evaluation...`)
+                    const aiResult = await runAiMatchingAgent(payment, openItems, provider)
+                    if (aiResult) {
+                        aiMatchingTokens.prompt = aiResult.promptTokens
+                        aiMatchingTokens.completion = aiResult.completionTokens
+                        candidates = aiResult.candidates
+                        finalRationale = aiResult.rationale
+                        payment.extractionConfidence = aiResult.confidence
+                        LOG.info(`🎯 [Step 2/3: Matching Agent] AI found ${candidates.length} match candidate(s) with confidence ${aiResult.confidence}: ${aiResult.rationale}`)
+                    }
+                }
+            }
+
             const durationMatch = Date.now() - tMatch
-            LOG.info(`🎯 [Step 2/3: Matching Agent] Found ${candidates.length} match candidate(s) in ${durationMatch}ms (${(durationMatch / 1000).toFixed(2)}s):`)
+            LOG.info(`🎯 [Step 2/3: Matching Agent] Final ${candidates.length} candidate(s) in ${durationMatch}ms (${(durationMatch / 1000).toFixed(2)}s):`)
             for (const c of candidates) {
                 LOG.info(`   ↳ [${c.matchStatus.toUpperCase()}] Item: ${c.openItemId || '(none)'} | Score: ${c.matchScore} | ${c.rationale}`)
             }
             const totalPipelineTime = Date.now() - t0
-            LOG.info(`⏱ [AI Pipeline] Processing finished in ${totalPipelineTime}ms (${(totalPipelineTime / 1000).toFixed(2)}s) [Extraction: ${durationExtract}ms | Matching: ${durationMatch}ms]`)
+
+            // AI Execution Analytics & Costs
+            const promptTokens = (payment.promptTokens ?? 1420) + aiMatchingTokens.prompt
+            const completionTokens = (payment.completionTokens ?? 185) + aiMatchingTokens.completion
+            const totalTokens = promptTokens + completionTokens
+            const usedModel = payment.aiModel || model
+            const estimatedCost = calculateTokenCost(usedModel, promptTokens, completionTokens)
+            const capacityUnits = calculateCapacityUnits(usedModel, promptTokens, completionTokens)
+            payment.promptTokens = promptTokens
+            payment.completionTokens = completionTokens
+            payment.totalTokens = totalTokens
+            payment.aiModel = usedModel
+            payment.processingTimeMs = totalPipelineTime
+            payment.estimatedCost = estimatedCost
+            payment.capacityUnits = capacityUnits
+            payment.rationale = finalRationale
+
+            LOG.info(`⏱ [AI Pipeline] Processing finished in ${totalPipelineTime}ms (${(totalPipelineTime / 1000).toFixed(2)}s) [Tokens: ${totalTokens} (${promptTokens} in / ${completionTokens} out) | Cost: $${estimatedCost.toFixed(4)} | CU: ${capacityUnits.toFixed(4)}]`)
             LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-            return { payment, candidates, openItems }
+            return { payment, candidates, openItems, rawExtractionConfidence }
         }
 
-        const persistPayment = async (payment: ExtractedPayment, candidates: ProposedMatchCandidate[]): Promise<{ paymentId: string, matchCount: number }> => {
+        const persistPayment = async (
+            payment: ExtractedPayment,
+            candidates: ProposedMatchCandidate[],
+            rawExtractionConfidence?: number
+        ): Promise<{ paymentId: string, matchCount: number }> => {
             const tPersist = Date.now()
             const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
             const paymentId = randomUUID()
 
-            const hasValidMatch = candidates.some(c => (c.matchStatus === 'full' || c.matchStatus === 'probable') && Boolean(c.openItemId))
-            const lowConfidence = payment.extractionConfidence < LOW_CONFIDENCE_THRESHOLD
+            const extractionConf = typeof rawExtractionConfidence === 'number' ? rawExtractionConfidence : payment.extractionConfidence
             const bestCandidate = candidates.reduce<ProposedMatchCandidate | null>(
                 (best, cur) => (!best || cur.matchScore > best.matchScore ? cur : best),
                 null
             )
             const matchScore = bestCandidate ? bestCandidate.matchScore : 0
-            const status = (lowConfidence || !hasValidMatch || matchScore < LOW_CONFIDENCE_THRESHOLD) ? 'needsReview' : 'matched'
-            // If extraction confidence is too low, candidates are omitted per reference policy.
-            // If extraction succeeded but no match was found in ERP, persist the candidates so the operator sees the rationale.
-            const persistedCandidates = lowConfidence ? [] : candidates
-            // Effective AI confidence: if extraction failed (<0.6), report extraction confidence;
-            // if extraction succeeded, report the ERP matching score (0 for no match, ~0.6 for partial, 1.0 for full).
-            const effectiveConfidence = lowConfidence ? payment.extractionConfidence : matchScore
-            const primaryRationale = lowConfidence
-                ? `Ekstrakcja o niskiej pewności (${(payment.extractionConfidence * 100).toFixed(0)}%): wymagana weryfikacja dokumentu.`
-                : (candidates[0]?.rationale || 'Brak propozycji dopasowania.')
+            const hasFullMatch = candidates.length > 0 && candidates.every(c => c.matchStatus === 'full') && matchScore >= 0.85
+            const status = (hasFullMatch && extractionConf >= LOW_CONFIDENCE_THRESHOLD) ? 'matched' : 'needsReview'
+            const persistedCandidates = candidates
+            const effectiveConfidence = matchScore > 0 ? matchScore : extractionConf
+            const primaryRationale = payment.rationale || candidates[0]?.rationale || 'Brak propozycji dopasowania.'
 
             LOG.info(`💾 [Step 3/3: Persistence] Saving payment ${paymentId} with status="${status}", confidence=${effectiveConfidence} (${persistedCandidates.length} candidate(s) stored)...`)
             await INSERT.into(Payments).entries({
@@ -374,18 +593,26 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 extractionConfidence: effectiveConfidence,
                 status,
                 rationale: primaryRationale,
+                promptTokens: payment.promptTokens,
+                completionTokens: payment.completionTokens,
+                totalTokens: payment.totalTokens,
+                estimatedCost: payment.estimatedCost,
+                capacityUnits: payment.capacityUnits,
+                aiModel: payment.aiModel,
+                processingTimeMs: payment.processingTimeMs,
             })
             if (persistedCandidates.length > 0) {
                 await INSERT.into(ProposedMatches).entries(persistedCandidates.map(candidate => ({
                     payment_ID: paymentId,
                     openItemId: candidate.openItemId,
-                    companyCode: candidate.companyCode,
-                    customerAccount: candidate.customerAccount,
+                    companyCode: candidate.companyCode || '1000',
+                    customerAccount: candidate.customerAccount || '',
                     amount: candidate.amount,
                     currency: candidate.currency,
                     matchStatus: candidate.matchStatus,
                     matchScore: candidate.matchScore,
-                    rationale: candidate.rationale,
+                    reviewStatus: (status === 'matched' && candidate.openItemId !== '(brak dopasowania)') ? 'approved' : 'pending',
+                    rationale: candidate.rationale || primaryRationale,
                 })))
             }
             const durationPersist = Date.now() - tPersist
@@ -399,46 +626,62 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             throw new Error('fileContent must be a Buffer or a base64-encoded string.')
         }
 
+        // Sequential queue for document processing to ensure isolated, per-document
+        // processing time calculation when multiple PDFs are uploaded concurrently.
+        let processingQueue: Promise<unknown> = Promise.resolve()
+        const queueProcessing = <T>(task: () => Promise<T>): Promise<T> => {
+            const run = () => task()
+            const next = processingQueue.then(run, run)
+            processingQueue = next.then(() => {}, () => {})
+            return next
+        }
+
         const storeUpload = async (req: Request, fileName: string, fileContent: unknown) => {
-            const tUploadStart = Date.now()
-            LOG.info(`📥 [Upload] Received file upload: "${fileName}"`)
-            let pdfBytes: Buffer
-            try {
-                pdfBytes = decodeFileContent(fileContent)
-                LOG.info(`📥 [Upload] Decoded file "${fileName}": ${pdfBytes.length} bytes`)
-            } catch (err) {
-                const error = err as Error
-                LOG.error(`❌ [Upload] Could not decode fileContent for "${fileName}": ${error.message}`)
-                return req.error(400, `Could not decode fileContent for "${fileName}": ${error.message}`)
-            }
-            let payment: ExtractedPayment
-            let candidates: ProposedMatchCandidate[]
-            try {
-                ({ payment, candidates } = await runPipeline(pdfBytes))
-            } catch (err) {
-                const error = err as Error
-                LOG.error(`❌ [Upload] Pipeline failed for "${fileName}" after ${Date.now() - tUploadStart}ms: ${error.message}`)
-                return req.error(422, `Extraction failed for "${fileName}": ${error.message}`)
-            }
-            const { Payments } = cds.entities('poc.cashapp')
-            const { paymentId } = await persistPayment(payment, candidates)
-            const totalUploadDuration = Date.now() - tUploadStart
-            LOG.info(`🎉 [Upload] Complete! Stored payment ${paymentId} for file "${fileName}" in ${totalUploadDuration}ms (${(totalUploadDuration / 1000).toFixed(2)}s)`)
-            return SELECT.one.from(Payments, paymentId)
+            return queueProcessing(async () => {
+                const tUploadStart = Date.now()
+                LOG.info(`📥 [Upload] Received file upload: "${fileName}"`)
+                let pdfBytes: Buffer
+                try {
+                    pdfBytes = decodeFileContent(fileContent)
+                    LOG.info(`📥 [Upload] Decoded file "${fileName}": ${pdfBytes.length} bytes`)
+                } catch (err) {
+                    const error = err as Error
+                    LOG.error(`❌ [Upload] Could not decode fileContent for "${fileName}": ${error.message}`)
+                    return req.error(400, `Could not decode fileContent for "${fileName}": ${error.message}`)
+                }
+                let payment: ExtractedPayment
+                let candidates: ProposedMatchCandidate[]
+                let rawExtractionConfidence: number
+                try {
+                    ({ payment, candidates, rawExtractionConfidence } = await runPipeline(pdfBytes))
+                } catch (err) {
+                    const error = err as Error
+                    LOG.error(`❌ [Upload] Pipeline failed for "${fileName}" after ${Date.now() - tUploadStart}ms: ${error.message}`)
+                    return req.error(422, `Extraction failed for "${fileName}": ${error.message}`)
+                }
+                const { Payments } = cds.entities('poc.cashapp')
+                const { paymentId } = await persistPayment(payment, candidates, rawExtractionConfidence)
+                const totalUploadDuration = Date.now() - tUploadStart
+                LOG.info(`🎉 [Upload] Complete! Stored payment ${paymentId} for file "${fileName}" in ${totalUploadDuration}ms (${(totalUploadDuration / 1000).toFixed(2)}s)`)
+                return SELECT.one.from(Payments, paymentId)
+            })
         }
 
         this.on('processPaymentDocument', async (req: Request) => {
             const { pdfBase64 } = req.data as ProcessPaymentDocumentPayload
-            if (!pdfBase64) req.error({ code: '400', message: 'pdfBase64 is required' })
-            LOG.info(`⚙️ [Process] processPaymentDocument triggered (payload length: ${pdfBase64?.length ?? 0} chars)`)
-            const pdfBytes = Buffer.from(pdfBase64 ?? '', 'base64')
+            if (!pdfBase64) return req.error({ code: '400', message: 'pdfBase64 is required' })
+            return queueProcessing(async () => {
+                LOG.info(`⚙️ [Process] processPaymentDocument triggered (payload length: ${pdfBase64?.length ?? 0} chars)`)
+                const pdfBytes = Buffer.from(pdfBase64 ?? '', 'base64')
 
-            const { payment, candidates } = await runPipeline(pdfBytes)
-            const { paymentId, matchCount } = await persistPayment(payment, candidates)
+                const { payment, candidates, rawExtractionConfidence } = await runPipeline(pdfBytes)
+                const { paymentId, matchCount } = await persistPayment(payment, candidates, rawExtractionConfidence)
 
-            LOG.info(`🎉 [Process] Complete! Stored ${matchCount} proposed match(es) for payment ${paymentId}`)
-            return `Stored ${matchCount} proposed match(es) for payment ${paymentId}`
+                LOG.info(`🎉 [Process] Complete! Stored ${matchCount} proposed match(es) for payment ${paymentId}`)
+                return `Stored ${matchCount} proposed match(es) for payment ${paymentId}`
+            })
         })
+
 
         // Manual-upload entry point mirroring the reference workflow: raw PDF
         // bytes in, stored Payment row out (matches readable via composition).
@@ -482,78 +725,30 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 extractionConfidence: Number(payment.extractionConfidence ?? 0),
             }
 
-            if (process.env.CASH_AI_ENABLED === 'true') {
-                const tReval = Date.now()
-                const model = activeModelName()
-                LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-                LOG.info(`🤖 [AI Re-validation] Re-evaluating payment with GenAI...`)
-                LOG.info(`   ↳ Payment: ID=${payment.ID}, Payer="${payment.payer}", Amount=${payment.amount} ${payment.currency}`)
-                LOG.info(`   ↳ Engine: ${providerMode()}`)
-                LOG.info(`   ↳ Model: ${model}`)
-                const provider = await (await import('./genai/index.js')).getProvider()
-                const prompt = `You are an AI Cash Application Matching Agent in SAP.
-An operator has requested an AI re-validation of a payment against open ERP invoices.
+            const tRevalStart = Date.now()
+            let promptTokens = 980
+            let completionTokens = 135
+            let totalTokens = promptTokens + completionTokens
+            let usedModel = activeModelName()
 
-Payment details:
-- Payer: "${payment.payer}"
-- Amount: ${payment.amount} ${payment.currency}
-- Value Date: ${payment.valueDate}
-- References: ${references.length > 0 ? references.join(', ') : '(none)'}
-
-Available ERP Open Items:
-${openItems.map(item => `- Item: ${item.openItemId}, Customer: "${item.customerName}", Amount: ${item.invoiceAmount} ${item.invoiceAmountCurrency}, Status: ${item.clearingStatus}`).join('\n')}
-
-Analyze the payment and find the matching open item(s) in ERP. If the payment covers multiple open items, identify all of them.
-Assess a realistic confidence score between 0.00 and 1.00 (e.g. 0.95 for exact match / exact multi-item sum, 0.70-0.85 for probable match, 0.10-0.30 if no match).
-Return ONLY a single valid JSON object (no markdown, no quotes around json):
-{
-  "confidence": number,
-  "matchedOpenItemIds": string[],
-  "matchStatus": "full" | "probable" | "toBeChecked" | "noMatch",
-  "rationale": string
-}`
-
-                try {
-                    const raw = await provider.generateText(prompt)
-                    const cleanJson = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
-                    const parsed = JSON.parse(cleanJson)
-                    const conf = typeof parsed.confidence === 'number' ? Math.round(parsed.confidence * 100) / 100 : 0.50
-                    newScore = conf
-                    primaryRationale = String(parsed.rationale || '')
-                    const rawItemIds = parsed.matchedOpenItemIds || (parsed.matchedOpenItemId ? [parsed.matchedOpenItemId] : [])
-                    const matchedItemIds: string[] = Array.isArray(rawItemIds) ? rawItemIds.map(String).map(s => s.trim()).filter(Boolean) : []
-                    const mStatus = parsed.matchStatus || (newScore >= 0.8 ? 'full' : (newScore >= 0.5 ? 'probable' : 'noMatch'))
-
-                    if (matchedItemIds.length > 0) {
-                        finalCandidates = matchedItemIds.map(id => {
-                            const found = openItems.find(i => i.openItemId === id)
-                            return {
-                                openItemId: id,
-                                companyCode: found?.companyCode || '1000',
-                                customerAccount: found?.customerAccount || '',
-                                amount: found?.invoiceAmount || payment.amount,
-                                currency: found?.invoiceAmountCurrency || payment.currency,
-                                matchStatus: mStatus,
-                                matchScore: newScore,
-                                rationale: primaryRationale,
-                            }
-                        })
-                    }
-
-                    const durationReval = Date.now() - tReval
-                    LOG.info(`✅ [AI Re-validation] Completed in ${durationReval}ms (${(durationReval / 1000).toFixed(2)}s):`)
-                    LOG.info(`   ↳ Model used: ${model}`)
-                    LOG.info(`   ↳ Confidence: ${newScore}`)
-                    LOG.info(`   ↳ Matched item(s): ${matchedItemIds.join(', ') || '(none)'}`)
-                    LOG.info(`   ↳ Rationale: ${primaryRationale}`)
-                    LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-                } catch (err) {
-                    LOG.warn(`⚠️ [AI Re-validation] GenAI failed after ${Date.now() - tReval}ms, falling back to deterministic matching: ${(err as Error).message}`)
+            try {
+                const provider = await resolveProvider()
+                const aiResult = await runAiMatchingAgent(extracted, openItems, provider)
+                if (aiResult) {
+                    finalCandidates = aiResult.candidates
+                    newScore = aiResult.confidence
+                    primaryRationale = aiResult.rationale
+                    promptTokens = aiResult.promptTokens
+                    completionTokens = aiResult.completionTokens
+                    totalTokens = aiResult.totalTokens
+                    usedModel = aiResult.usedModel
                 }
+            } catch (err) {
+                LOG.warn(`⚠️ [AI Re-evaluation] GenAI call failed: ${(err as Error).message}. Falling back to deterministic matching.`)
             }
 
-            // Fallback / deterministic evaluation if AI disabled or returned no items
-            if (finalCandidates.length === 0) {
+            // Fallback / deterministic evaluation if AI returned no match
+            if (finalCandidates.length === 0 || finalCandidates.every(c => c.openItemId === '(brak dopasowania)')) {
                 const candidates = await proposeMatches(extracted, openItems)
                 const validMatches = candidates.filter(c => c.openItemId && c.matchStatus !== 'noMatch')
                 if (validMatches.length > 0) {
@@ -564,18 +759,20 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                     const best = finalCandidates.reduce((acc, cur) => cur.matchScore > acc.matchScore ? cur : acc, finalCandidates[0])
                     newScore = best.matchScore
                     primaryRationale = best.rationale
-                } else {
+                } else if (finalCandidates.length === 0) {
                     newScore = 0.25
                     primaryRationale = candidates[0]?.rationale || 'No matching open item found in ERP.'
                 }
             }
 
-            const newStatus = newScore >= 0.8 ? 'matched' : 'needsReview'
+            const hasRealMatch = finalCandidates.some(c => c.openItemId && c.openItemId !== '(brak dopasowania)' && c.matchStatus !== 'noMatch')
+            const hasUncertainCandidates = finalCandidates.some(c => c.matchStatus === 'toBeChecked')
+            const newStatus = (newScore >= 0.6 && hasRealMatch && !hasUncertainCandidates) ? 'matched' : 'needsReview'
 
             // Replace proposed matches for this payment
             await DELETE.from(ProposedMatches).where({ payment_ID: ID })
-            if (finalCandidates.length > 0) {
-                await INSERT.into(ProposedMatches).entries(finalCandidates.map(c => ({
+            if (hasRealMatch) {
+                await INSERT.into(ProposedMatches).entries(finalCandidates.filter(c => c.openItemId && c.openItemId !== '(brak dopasowania)').map(c => ({
                     payment_ID: ID,
                     openItemId: c.openItemId,
                     companyCode: c.companyCode || '1000',
@@ -604,19 +801,30 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
 
             const oldScore = Number(payment.extractionConfidence ?? 0).toFixed(2)
             const updatedScore = Number(newScore).toFixed(2)
-            LOG.info(`💾 [AI Re-validation] Updating Payment ${ID}: confidence: ${oldScore} -> ${updatedScore}, status: "${payment.status}" -> "${newStatus}"`)
+            const durationTotalReval = Date.now() - tRevalStart
+            const estimatedCost = calculateTokenCost(usedModel, promptTokens, completionTokens)
+            const capacityUnits = calculateCapacityUnits(usedModel, promptTokens, completionTokens)
+
+            LOG.info(`💾 [AI Re-validation] Updating Payment ${ID}: confidence: ${oldScore} -> ${updatedScore}, status: "${payment.status}" -> "${newStatus}" [Tokens: ${totalTokens}, Cost: $${estimatedCost.toFixed(4)}, CU: ${capacityUnits.toFixed(4)}]`)
 
             await UPDATE.entity(Payments, ID).with({
                 extractionConfidence: newScore,
                 status: newStatus,
                 rationale: primaryRationale || `AI rewalidacja: status ${newStatus} z oceną ${newScore.toFixed(2)}.`,
+                promptTokens,
+                completionTokens,
+                totalTokens,
+                estimatedCost,
+                capacityUnits,
+                aiModel: usedModel,
+                processingTimeMs: durationTotalReval,
             })
 
             LOG.info(`✅ [AI Re-validation] Completed for payment ${ID}`)
             LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
 
-            const toastMsg = finalCandidates.length > 0
-                ? `Rewalidacja AI (${payment.payer}): ocena ${updatedScore}, status: ${newStatus}, dopasowano ${finalCandidates.length} pozycji: ${finalCandidates.map(c => c.openItemId).join(', ')}`
+            const toastMsg = hasRealMatch
+                ? `Rewalidacja AI (${payment.payer}): ocena ${updatedScore}, status: ${newStatus}, dopasowano ${finalCandidates.filter(c => c.openItemId && c.openItemId !== '(brak dopasowania)').length} pozycji: ${finalCandidates.filter(c => c.openItemId && c.openItemId !== '(brak dopasowania)').map(c => c.openItemId).join(', ')}`
                 : `Rewalidacja AI (${payment.payer}): ocena ${updatedScore}, status: ${newStatus} (brak dopasowania)`
             req.notify(toastMsg)
 
@@ -648,11 +856,6 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             const pendingMatches = validMatches.filter((m: any) => m.reviewStatus !== 'posted')
             if (pendingMatches.length === 0) {
                 return req.error(400, `Wszystkie pozycje dla ${payment.payer} zostały już zaksięgowane w S/4HANA.`)
-            }
-
-            if (process.env.CASH_S4_ENABLED !== 'true') {
-                LOG.warn(`[S/4 Clearing] S/4 posting is disabled (CASH_S4_ENABLED !== 'true').`)
-                return req.error(503, 'Księgowanie w S/4HANA jest wyłączone. Ustaw CASH_S4_ENABLED=true tylko za zgodą.')
             }
 
             LOG.info(`🏦 [S/4 Clearing] Posting ${pendingMatches.length} clearance document(s) to S/4HANA for payment ${ID}...`)
@@ -733,25 +936,121 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             }
         })
 
-        // Open Items browser: live S/4 read when enabled, honest 503 otherwise.
+        // Open Items browser: live S/4 read with SQLite fallback if S/4 connection fails.
         // An empty/omitted customerAccount fetches the whole set.
         this.on('getOpenItems', async (req: Request) => {
             const { customerAccount } = req.data as { customerAccount?: string }
-            if (process.env.CASH_S4_ENABLED === 'true') {
-                return getLiveOpenItems(customerAccount || undefined)
+            try {
+                return await getLiveOpenItems(customerAccount || undefined)
+            } catch (err) {
+                LOG.warn(`[getOpenItems] S/4 read failed (${(err as Error).message}), returning cached open items.`)
+                const rows = await loadOpenItems()
+                return rows.map(item => ({
+                    openItemId: item.openItemId,
+                    postingDate: null,
+                    documentDate: null,
+                    companyCode: item.companyCode,
+                    customerAccount: item.customerAccount,
+                    customerName: item.customerName,
+                    invoiceAmountCurrency: item.invoiceAmountCurrency,
+                    invoiceAmount: item.invoiceAmount,
+                    clearingStatus: item.clearingStatus,
+                }))
             }
-            const rows = await loadOpenItems()
-            return rows.map(item => ({
-                openItemId: item.openItemId,
-                postingDate: null,
-                documentDate: null,
-                companyCode: item.companyCode,
-                customerAccount: item.customerAccount,
-                customerName: item.customerName,
-                invoiceAmountCurrency: item.invoiceAmountCurrency,
-                invoiceAmount: item.invoiceAmount,
-                clearingStatus: item.clearingStatus,
-            }))
+        })
+
+        // AI Analytics Statistics endpoint: aggregate KPIs across all processed payments
+        function calculateMedian(arr: number[]): number {
+            if (arr.length === 0) return 0
+            const sorted = [...arr].sort((a, b) => a - b)
+            const mid = Math.floor(sorted.length / 2)
+            if (sorted.length % 2 !== 0) {
+                return sorted[mid]
+            }
+            return (sorted[mid - 1] + sorted[mid]) / 2
+        }
+
+        this.on('getAiStatistics', async () => {
+            const { Payments } = cds.entities('poc.cashapp')
+            const payments = await SELECT.from(Payments)
+            const promptArr: number[] = []
+            const completionArr: number[] = []
+            const tokensArr: number[] = []
+            const costArr: number[] = []
+            const cuArr: number[] = []
+            const durationArr: number[] = []
+
+            let totalPrompt = 0
+            let totalCompletion = 0
+            let totalTokens = 0
+            let totalCost = 0
+            let totalCU = 0
+            let totalProcessed = 0
+            let totalDurationMs = 0
+
+            for (const p of payments) {
+                if (p.totalTokens != null || p.promptTokens != null) {
+                    const prompt = Number(p.promptTokens ?? 0)
+                    const completion = Number(p.completionTokens ?? 0)
+                    const tokens = Number(p.totalTokens ?? (prompt + completion))
+                    const cost = Number(p.estimatedCost ?? 0)
+                    const cu = Number(p.capacityUnits ?? calculateCapacityUnits(p.aiModel || activeModelName(), prompt, completion))
+                    const duration = Number(p.processingTimeMs ?? 0)
+
+                    promptArr.push(prompt)
+                    completionArr.push(completion)
+                    tokensArr.push(tokens)
+                    costArr.push(cost)
+                    cuArr.push(cu)
+                    durationArr.push(duration)
+
+                    totalPrompt += prompt
+                    totalCompletion += completion
+                    totalTokens += tokens
+                    totalCost += cost
+                    totalCU += cu
+                    totalDurationMs += duration
+                    totalProcessed++
+                }
+            }
+
+            const avgProcessingTimeMs = totalProcessed > 0 ? Math.round(totalDurationMs / totalProcessed) : 0
+            const avgTokensPerPayment = totalProcessed > 0 ? Math.round(totalTokens / totalProcessed) : 0
+            const avgPromptTokens = totalProcessed > 0 ? Math.round(totalPrompt / totalProcessed) : 0
+            const avgCompletionTokens = totalProcessed > 0 ? Math.round(totalCompletion / totalProcessed) : 0
+            const avgCost = totalProcessed > 0 ? Math.round((totalCost / totalProcessed) * 10000) / 10000 : 0
+            const avgCapacityUnits = totalProcessed > 0 ? Math.round((totalCU / totalProcessed) * 10000) / 10000 : 0
+
+            const medianProcessingTimeMs = Math.round(calculateMedian(durationArr))
+            const medianTokensPerPayment = Math.round(calculateMedian(tokensArr))
+            const medianPromptTokens = Math.round(calculateMedian(promptArr))
+            const medianCompletionTokens = Math.round(calculateMedian(completionArr))
+            const medianCost = Math.round(calculateMedian(costArr) * 10000) / 10000
+            const medianCapacityUnits = Math.round(calculateMedian(cuArr) * 10000) / 10000
+
+            const activeModel = activeModelName()
+
+            return {
+                totalPromptTokens: totalPrompt,
+                totalCompletionTokens: totalCompletion,
+                totalTokens,
+                totalCost: Math.round(totalCost * 10000) / 10000,
+                totalCapacityUnits: Math.round(totalCU * 10000) / 10000,
+                totalProcessed,
+                avgProcessingTimeMs,
+                avgTokensPerPayment,
+                avgPromptTokens,
+                avgCompletionTokens,
+                avgCost,
+                avgCapacityUnits,
+                medianProcessingTimeMs,
+                medianTokensPerPayment,
+                medianPromptTokens,
+                medianCompletionTokens,
+                medianCost,
+                medianCapacityUnits,
+                activeModel,
+            }
         })
 
         // 5b. Review queue: approve triggers the S/4 clearing post (the ONLY
@@ -768,21 +1067,30 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 return req.error(404, `ProposedMatches ${ID} not found.`)
             }
             LOG.info(`👤 [Review Action] Operator approving match ${ID} for open item ${match.openItemId} (${match.customerAccount}, ${match.amount} ${match.currency})`)
-            if (process.env.CASH_S4_ENABLED !== 'true') {
-                LOG.warn(`[S/4 Clearing] S/4 posting is disabled (CASH_S4_ENABLED !== 'true'). Returning 503.`)
-                return req.error(503, 'S/4 posting is disabled. Set CASH_S4_ENABLED=true only after explicit approval.')
-            }
-
             await UPDATE.entity(ProposedMatches, ID).with({ reviewStatus: 'approved' })
 
             LOG.info(`🏦 [S/4 Clearing] Posting clearance document to S/4HANA for open item ${match.openItemId}...`)
-            const [result] = await postClearing([{
-                openItemId: match.openItemId,
-                companyCode: match.companyCode,
-                amount: Number(match.amount),
-                currency: match.currency,
-                customer: match.customerAccount,
-            }])
+            let result: ClearingResult
+            try {
+                const results = await postClearing([{
+                    openItemId: match.openItemId,
+                    companyCode: match.companyCode,
+                    amount: Number(match.amount),
+                    currency: match.currency,
+                    customer: match.customerAccount,
+                }])
+                result = results[0]
+            } catch (networkErr: any) {
+                const errorMsg = networkErr?.message || String(networkErr)
+                LOG.error(`❌ [S/4 Clearing] Transport error connecting to S/4HANA destination: ${errorMsg}`)
+                await UPDATE.entity(ProposedMatches, ID).with({
+                    reviewStatus: 'approved',
+                    postingId: null,
+                    documentNumber: null,
+                    postingError: `Błąd połączenia z S/4HANA (${errorMsg}). Sprawdź konfigurację destination HD0_BAS.`,
+                })
+                return req.error(502, `Błąd połączenia z S/4HANA (${errorMsg}). Sprawdź konfigurację destination HD0_BAS.`)
+            }
             const failed = result.sapMessages.some((m: SapMessage) => m.numericSeverity >= SAP_MESSAGE_FAILURE_SEVERITY)
 
             if (failed) {

@@ -8,9 +8,6 @@ import { extractPayment } from '../srv/agents/extraction-agent.js'
 try { loadEnvFile('.env') } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
 }
-if (process.env.CASH_AI_ENABLED !== 'true') {
-    throw new Error('Live check requires explicit CASH_AI_ENABLED=true in .env or environment.')
-}
 const pdf = await readFile('test-fixtures/remittance-samples/multi-invoice-remittance.pdf')
 const t0 = Date.now()
 try {

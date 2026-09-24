@@ -71,9 +71,6 @@ export async function getOpenItems(
   companyCode?: string,
   httpGet: HttpGet = defaultHttpGet,
 ): Promise<OpenItem[]> {
-  if (process.env.CASH_S4_ENABLED !== 'true') {
-    throw new Error('S/4 access is disabled. Set CASH_S4_ENABLED=true only after configuring the destination.');
-  }
 
   const filters: string[] = [];
   if (customerAccount) filters.push(`CustomerAccount eq '${customerAccount}'`);

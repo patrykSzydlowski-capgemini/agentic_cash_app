@@ -1,0 +1,165 @@
+<core:FragmentDefinition
+    xmlns="sap.m"
+    xmlns:core="sap.ui.core"
+    xmlns:layout="sap.ui.layout"
+    xmlns:form="sap.ui.layout.form">
+    <Dialog
+        id="aiKpiDialog"
+        title="{i18n>kpiDialogTitle}"
+        contentWidth="720px"
+        contentHeight="auto"
+        resizable="true"
+        draggable="true">
+        <content>
+            <VBox class="sapUiMediumMargin">
+                <!-- KPI Tiles Row -->
+                <layout:Grid
+                    defaultSpan="XL3 L3 M6 S12"
+                    hSpacing="1"
+                    vSpacing="1"
+                    class="sapUiSmallMarginBottom">
+                    <!-- Total Tokens Tile -->
+                    <GenericTile
+                        header="{i18n>kpiTotalTokens}"
+                        subheader="{i18n>kpiTotalTokensSubtitle}"
+                        frameType="OneByOne">
+                        <tileContent>
+                            <TileContent unit="tokens">
+                                <content>
+                                    <NumericContent
+                                        value="{kpi>/totalTokensFormatted}"
+                                        valueColor="Good"
+                                        icon="sap-icon://chart-axis" />
+                                </content>
+                            </TileContent>
+                        </tileContent>
+                    </GenericTile>
+
+                    <!-- SAP Capacity Units Tile -->
+                    <GenericTile
+                        header="{i18n>kpiTotalCapacityUnits}"
+                        subheader="{i18n>kpiTotalCapacityUnitsSubtitle}"
+                        frameType="OneByOne">
+                        <tileContent>
+                            <TileContent unit="CU">
+                                <content>
+                                    <NumericContent
+                                        value="{kpi>/totalCapacityUnitsFormatted}"
+                                        valueColor="Good"
+                                        icon="sap-icon://performance" />
+                                </content>
+                            </TileContent>
+                        </tileContent>
+                    </GenericTile>
+
+                    <!-- Estimated Cost Tile -->
+                    <GenericTile
+                        header="{i18n>kpiTotalCost}"
+                        subheader="{i18n>kpiTotalCostSubtitle}"
+                        frameType="OneByOne">
+                        <tileContent>
+                            <TileContent unit="USD">
+                                <content>
+                                    <NumericContent
+                                        value="{kpi>/totalCostFormatted}"
+                                        scale="$"
+                                        valueColor="Critical"
+                                        icon="sap-icon://money-bills" />
+                                </content>
+                            </TileContent>
+                        </tileContent>
+                    </GenericTile>
+
+                    <!-- Processed Invoices Tile -->
+                    <GenericTile
+                        header="{i18n>kpiProcessedPayments}"
+                        subheader="{i18n>kpiProcessedSubtitle}"
+                        frameType="OneByOne">
+                        <tileContent>
+                            <TileContent unit="docs">
+                                <content>
+                                    <NumericContent
+                                        value="{kpi>/totalProcessed}"
+                                        valueColor="Neutral"
+                                        icon="sap-icon://document-text" />
+                                </content>
+                            </TileContent>
+                        </tileContent>
+                    </GenericTile>
+                </layout:Grid>
+
+                <!-- Detailed Breakdown Form: Averages & Medians -->
+                <form:SimpleForm
+                    title="{i18n>tabAiAnalytics}"
+                    editable="false"
+                    layout="ResponsiveGridLayout"
+                    labelSpanXL="5"
+                    labelSpanL="5"
+                    labelSpanM="5"
+                    labelSpanS="12"
+                    columnsXL="2"
+                    columnsL="2"
+                    columnsM="1">
+                    <form:content>
+                        <!-- Averages Section -->
+                        <core:Title text="{i18n>kpiGroupAverages}" />
+                        <Label text="{i18n>kpiAvgTokens}" />
+                        <Text text="{kpi>/avgTokensPerPaymentFormatted} ({kpi>/avgPromptTokensFormatted} in / {kpi>/avgCompletionTokensFormatted} out)" />
+
+                        <Label text="{i18n>kpiAvgDuration}" />
+                        <Text text="{kpi>/avgProcessingTimeSec} s ({kpi>/avgProcessingTimeMs} ms)" />
+
+                        <Label text="{i18n>kpiAvgCost}" />
+                        <Text text="${kpi>/avgCostFormatted} USD" />
+
+                        <Label text="{i18n>kpiAvgCU}" />
+                        <Text text="{kpi>/avgCapacityUnitsFormatted} CU" />
+
+                        <!-- Medians Section -->
+                        <core:Title text="{i18n>kpiGroupMedians}" />
+                        <Label text="{i18n>kpiMedianTokens}" />
+                        <Text text="{kpi>/medianTokensPerPaymentFormatted} ({kpi>/medianPromptTokensFormatted} in / {kpi>/medianCompletionTokensFormatted} out)" />
+
+                        <Label text="{i18n>kpiMedianDuration}" />
+                        <Text text="{kpi>/medianProcessingTimeSec} s ({kpi>/medianProcessingTimeMs} ms)" />
+
+                        <Label text="{i18n>kpiMedianCost}" />
+                        <Text text="${kpi>/medianCostFormatted} USD" />
+
+                        <Label text="{i18n>kpiMedianCU}" />
+                        <Text text="{kpi>/medianCapacityUnitsFormatted} CU" />
+
+                        <!-- Global Details -->
+                        <core:Title text="{i18n>aiAnalyticsTypeNamePlural}" />
+                        <Label text="{i18n>kpiActiveModel}" />
+                        <Text text="{kpi>/activeModel}" />
+
+                        <Label text="{i18n>kpiPromptTokensBreakdown}" />
+                        <Text text="{kpi>/totalPromptTokensFormatted}" />
+
+                        <Label text="{i18n>kpiCompletionTokensBreakdown}" />
+                        <Text text="{kpi>/totalCompletionTokensFormatted}" />
+                    </form:content>
+                </form:SimpleForm>
+
+                <!-- Tariff & Billing Disclaimer Note -->
+                <MessageStrip
+                    text="{i18n>kpiTariffDisclaimer}"
+                    type="Information"
+                    showIcon="true"
+                    class="sapUiSmallMarginTop" />
+            </VBox>
+        </content>
+        <beginButton>
+            <Button
+                text="{i18n>actionRefreshStats}"
+                icon="sap-icon://refresh"
+                press=".onRefreshKpiData" />
+        </beginButton>
+        <endButton>
+            <Button
+                text="{i18n>btnClose}"
+                press=".onCloseKpiDialog" />
+        </endButton>
+    </Dialog>
+</core:FragmentDefinition>

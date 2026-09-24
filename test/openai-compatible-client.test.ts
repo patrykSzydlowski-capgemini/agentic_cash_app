@@ -27,7 +27,6 @@ function stubHttpPost(capture: { url?: string; body?: unknown }, respond: () => 
 }
 
 test('generateText posts to OpenRouter chat completions with model and key', async () => {
-    process.env.CASH_AI_ENABLED = 'true';
     process.env.OPENROUTER_API_KEY = 'test-key';
     const capture: { url?: string; body?: unknown } = {};
     const httpPost = stubHttpPost(capture, () => okResponse('hello'));
@@ -43,7 +42,6 @@ test('generateText posts to OpenRouter chat completions with model and key', asy
 });
 
 test('extractDocument sends the PDF as base64 data URL', async () => {
-    process.env.CASH_AI_ENABLED = 'true';
     process.env.OPENROUTER_API_KEY = 'test-key';
     const capture: { url?: string; body?: unknown } = {};
     const httpPost = stubHttpPost(capture, () => okResponse('{"payer":"x"}'));
@@ -60,24 +58,15 @@ test('extractDocument sends the PDF as base64 data URL', async () => {
     assert.ok(filePart.file.file_data.includes(Buffer.from('%PDF-fake').toString('base64')));
 });
 
-test('client throws when disabled or key missing, never silently mocks', async () => {
-    delete process.env.CASH_AI_ENABLED;
-    await assert.rejects(
-        () => extractDocument(Buffer.from('x'), 'p', stubHttpPost({}, () => okResponse('x'))),
-        IntegrationUnavailableError,
-    );
-
-    process.env.CASH_AI_ENABLED = 'true';
+test('client throws when key missing, never silently mocks', async () => {
     delete process.env.OPENROUTER_API_KEY;
     await assert.rejects(
         () => generateText('p', stubHttpPost({}, () => okResponse('x'))),
         IntegrationUnavailableError,
     );
-    delete process.env.OPENROUTER_API_KEY;
 });
 
 test('provider error surfaces with status and body', async () => {
-    process.env.CASH_AI_ENABLED = 'true';
     process.env.OPENROUTER_API_KEY = 'test-key';
     const failing: HttpPostJson = async () => ({
         ok: false,
@@ -93,7 +82,6 @@ test('provider error surfaces with status and body', async () => {
 });
 
 test('network failure propagates instead of falling back to mocks', async () => {
-    process.env.CASH_AI_ENABLED = 'true';
     process.env.OPENROUTER_API_KEY = 'test-key';
     const networkError: HttpPostJson = async () => {
         throw new Error('getaddrinfo ENOTFOUND openrouter.ai');

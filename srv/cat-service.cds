@@ -25,6 +25,7 @@ service CashSyncService {
     entity ManualTask     as projection on my.ManualTask;
 
     // Imported ts-agentic-poc workflow (extraction -> matching -> review).
+    @cds.redirection.target
     entity Payments as projection on app.Payments {
         *,
         case status
@@ -53,8 +54,59 @@ service CashSyncService {
     };
     @readonly entity IngestionLog    as projection on app.IngestionLog;
 
-    // Open Items browser tab: live S/4 read when CASH_S4_ENABLED=true,
-    // local-first SQLite fallback otherwise.
+    @readonly entity AiAnalytics     as projection on app.Payments {
+        ID,
+        createdAt,
+        modifiedAt,
+        payer,
+        amount,
+        currency,
+        valueDate,
+        status,
+        extractionConfidence,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        estimatedCost,
+        capacityUnits,
+        aiModel,
+        processingTimeMs,
+        case status
+            when 'matched'     then 3
+            when 'extracted'   then 2
+            when 'needsReview' then 2
+            when 'cleared'     then 3
+            else 0
+        end as StatusCriticality : Integer
+    };
+
+    type AiStatisticsRecord {
+        totalPromptTokens        : Integer;
+        totalCompletionTokens    : Integer;
+        totalTokens              : Integer;
+        totalCost                : Decimal(10, 4);
+        totalCapacityUnits       : Decimal(10, 4);
+        totalProcessed           : Integer;
+        // Mean / Average metrics
+        avgProcessingTimeMs      : Integer;
+        avgTokensPerPayment      : Integer;
+        avgPromptTokens          : Integer;
+        avgCompletionTokens      : Integer;
+        avgCost                  : Decimal(10, 4);
+        avgCapacityUnits         : Decimal(10, 4);
+        // Median metrics
+        medianProcessingTimeMs   : Integer;
+        medianTokensPerPayment   : Integer;
+        medianPromptTokens       : Integer;
+        medianCompletionTokens   : Integer;
+        medianCost               : Decimal(10, 4);
+        medianCapacityUnits      : Decimal(10, 4);
+        activeModel              : String(80);
+    };
+
+    function getAiStatistics() returns AiStatisticsRecord;
+
+    // Open Items browser tab: live S/4 read with local-first SQLite fallback.
     function getOpenItems(customerAccount: String) returns array of OpenItemRecord;
 
     type OpenItemRecord {
@@ -72,8 +124,7 @@ service CashSyncService {
     // UI-facing upload entry point: raw PDF bytes (Buffer or base64 string).
     action uploadPayment(fileName: String, fileContent: LargeBinary) returns Payments;
 
-    // Local-first pipeline: extract -> match -> persist. No external calls
-    // unless CASH_AI_ENABLED / CASH_S4_ENABLED are explicitly set.
+    // AI & S/4 pipeline: extract -> match -> persist.
     action processPaymentDocument(pdfBase64: LargeString) returns String;
 
     // One-click sample validation from the UI: runs the same AI pipeline over

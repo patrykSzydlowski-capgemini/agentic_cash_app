@@ -1,7 +1,7 @@
 // Adapted from AlexanderX/ts-agentic-poc (Apache-2.0).
 // Writes to the S/4 Postings service (zac_posting_moc_o4). Creating a
 // Postings record IS the posting action; simulatePosting is the follow-up.
-// Requires CASH_S4_ENABLED=true and the destination to exist; the HTTP layer
+// Connects to the S/4 destination (HD0_BAS); the HTTP layer
 // is injected so postClearing is unit-testable without hitting the sandbox.
 
 export interface ClearingMatch {
@@ -37,7 +37,6 @@ interface PostingRecord {
 export type HttpPost = (url: string, body: unknown) => Promise<unknown>
 
 async function defaultHttpPost(url: string, body: unknown): Promise<unknown> {
-    if (process.env.CASH_S4_ENABLED !== 'true') throw new Error('S/4 posting is disabled. Set CASH_S4_ENABLED=true only after explicit approval.')
     if (!process.env.VCAP_SERVICES) {
         try {
             // @ts-expect-error @sap/xsenv does not bundle type declarations

@@ -1,10 +1,10 @@
 // OpenAI-compatible chat-completions client, aimed at OpenRouter but usable
 // with any compatible endpoint (OPENROUTER_BASE_URL override: OpenAI, Groq,
-// local gateways, ...). Disabled by design unless CASH_AI_ENABLED=true;
-// throws instead of silently falling back to mocks.
+// local gateways, ...).
 // The HTTP layer is injectable so tests never hit the network.
 
 import { openRouterKey, requireAIEnabled } from './config.js'
+import type { AIExecutionResult, TokenUsage } from './types.js'
 export { IntegrationUnavailableError } from './config.js'
 
 export type HttpPostJson = (url: string, init: {
@@ -29,13 +29,14 @@ function apiKey(): string {
     return openRouterKey()
 }
 
-async function chat(messages: unknown, httpPost: HttpPostJson = defaultHttpPost): Promise<string> {
+async function chatWithUsage(messages: unknown, httpPost: HttpPostJson = defaultHttpPost): Promise<AIExecutionResult> {
+    const selectedModel = model()
     const response = await httpPost(`${baseUrl()}/chat/completions`, {
         headers: {
             Authorization: `Bearer ${apiKey()}`,
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ model: model(), messages }),
+        body: JSON.stringify({ model: selectedModel, messages }),
     })
 
     if (!response.ok) {
@@ -44,17 +45,32 @@ async function chat(messages: unknown, httpPost: HttpPostJson = defaultHttpPost)
 
     const data = await response.json() as {
         choices?: { message?: { content?: string | { text?: string }[] } }[]
+        usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
     }
     const raw = data.choices?.[0]?.message?.content
     const content = typeof raw === 'string'
         ? raw
         : Array.isArray(raw) ? raw.map(part => part?.text ?? '').join('') : undefined
     if (!content?.trim()) throw new Error('AI provider returned no content.')
-    return content
+
+    let usage: TokenUsage | undefined
+    if (data.usage) {
+        usage = {
+            promptTokens: data.usage.prompt_tokens ?? 0,
+            completionTokens: data.usage.completion_tokens ?? 0,
+            totalTokens: data.usage.total_tokens ?? 0,
+        }
+    }
+
+    return { content, usage, model: selectedModel }
 }
 
 export async function extractDocument(pdfBuffer: Buffer, prompt: string, httpPost: HttpPostJson = defaultHttpPost): Promise<string> {
-    return chat([{
+    return (await extractDocumentWithUsage(pdfBuffer, prompt, httpPost)).content
+}
+
+export async function extractDocumentWithUsage(pdfBuffer: Buffer, prompt: string, httpPost: HttpPostJson = defaultHttpPost): Promise<AIExecutionResult> {
+    return chatWithUsage([{
         role: 'user',
         content: [
             { type: 'text', text: prompt },
@@ -67,5 +83,9 @@ export async function extractDocument(pdfBuffer: Buffer, prompt: string, httpPos
 }
 
 export async function generateText(prompt: string, httpPost: HttpPostJson = defaultHttpPost): Promise<string> {
-    return chat([{ role: 'user', content: prompt }], httpPost)
+    return (await generateTextWithUsage(prompt, httpPost)).content
+}
+
+export async function generateTextWithUsage(prompt: string, httpPost: HttpPostJson = defaultHttpPost): Promise<AIExecutionResult> {
+    return chatWithUsage([{ role: 'user', content: prompt }], httpPost)
 }

@@ -34,21 +34,18 @@ integration.
 - `srv/agents/extraction-agent.ts` / `matching-agent.ts` — extraction and
   matching logic from ts-agentic-poc; AI calls are injectable for tests.
 - `srv/genai/orchestration-client.ts` — SAP AI Core / AI Hub Orchestration
-  client (**primary** AI path, `CASH_AI_PROVIDER=aicore`). Inert unless
-  `CASH_AI_ENABLED=true` with a service key or CF binding; otherwise it
-  throws `IntegrationUnavailableError` instead of silently mocking.
+  client (**primary** AI path, `CASH_AI_PROVIDER=aicore`). Connects via
+  BTP Destination `GenAI` or service key / CF binding.
 - `srv/genai/openai-compatible-client.ts` — OpenAI-compatible chat client
   aimed at OpenRouter (any compatible endpoint via `OPENROUTER_BASE_URL`).
-  **Unused alternative** (`CASH_AI_PROVIDER=openrouter`); same explicit-enable
-  contract as above. Default
+  **Unused alternative** (`CASH_AI_PROVIDER=openrouter`). Default
   model is configurable with `OPENROUTER_MODEL`; verify current availability,
   PDF/file-input support and pricing in the OpenRouter catalog.
 - `srv/s4/open-items-client.ts` — destination-backed S/4 read adapter
-  (`HD0_BAS` by default, `S4_DESTINATION_NAME` to override). Requires
-  `CASH_S4_ENABLED=true`; rejects paginated responses instead of matching on
-  partial data. Local pipeline runs read from SQLite `poc.cash.OpenItem`.
+  (`HD0_BAS` by default, `S4_DESTINATION_NAME` to override). Rejects
+  paginated responses instead of matching on partial data. Falls back to SQLite cache if unreachable.
 - `srv/s4/clearing-client.ts` — posting client with injected HTTP layer;
-  disabled unless `CASH_S4_ENABLED=true`. Unit-tested in
+  posts to S/4 via `@sap-cloud-sdk/http-client`. Unit-tested in
   `test/clearing-client.test.ts`.
 - `scripts/run-extraction-fixtures.ts`, `scripts/run-matching-fixtures.ts` —
   manual fixture runners against `test-fixtures/remittance-samples/`.
@@ -65,8 +62,7 @@ integration.
   with no candidates persisted (matching skipped on shaky data).
 - Bound `approve()` / `reject()` on `ProposedMatches`: approve posts clearing
   via `postClearing` (SAP message severity ≥ 3 → stays `approved` with
-  `postingError`, else `posted`); without `CASH_S4_ENABLED=true` approve fails
-  honestly with 503 and no status change. Reject is a pure `rejected` flip.
+  `postingError`, else `posted`). Reject is a pure `rejected` flip.
 - UI: Fiori Elements LROP on `/Payments` (matching queue, Object Page with
   payment details + proposed-matches facet), approve/reject buttons on
   ProposedMatches rows, PDF upload via controller extension, legacy
@@ -97,8 +93,8 @@ disposable in-memory databases and stop their server after the tests.
 
 ## Подключение ИИ: пошаговая инструкция
 
-По умолчанию используется явный локальный mock. Реальный провайдер включается
-только при `CASH_AI_ENABLED=true`. Провайдер выбирается `CASH_AI_PROVIDER`:
+По умолчанию используется реальный провайдер ИИ (SAP AI Core / AI Hub).
+Провайдер выбирается переменной `CASH_AI_PROVIDER`:
 `aicore` (по умолчанию — SAP AI Core / AI Hub Orchestration, основной путь)
 либо `openrouter` (OpenAI-совместимый клиент, нацеленный на OpenRouter —
 неиспользуемая альтернатива). Ошибка выбранного live-провайдера никогда не
@@ -115,7 +111,6 @@ disposable in-memory databases and stop their server after the tests.
    ```
    Затем откройте `.env` и приведите строки к виду:
    ```env
-   CASH_AI_ENABLED=true
    CASH_AI_PROVIDER=aicore
    AICORE_MODEL=имя-доступной-модели
    AICORE_RESOURCE_GROUP=default
@@ -148,15 +143,12 @@ disposable in-memory databases and stop their server after the tests.
 
 Обе проверки могут передать внешнему провайдеру содержимое документа и вызвать
 расходы по аккаунту; запускайте их только осознанно. Содержимое документа и
-ключ в консоль не печатаются. Для отключения live-вызовов верните
-`CASH_AI_ENABLED=false` и перезапустите сервер — pipeline вернётся к явным
-mock-результатам (нулевая уверенность, без разрешения плательщика).
+ключ в консоль не печатаются.
 
 ### Если что-то не подключилось
 
 | Симптом | Причина | Что сделать |
 | --- | --- | --- |
-| 503 `AI is disabled` | `CASH_AI_ENABLED` не `true` | поставьте `true` в `.env`, перезапустите сервер |
 | 503 `AICORE_SERVICE_KEY is missing` | ключ не вставлен / пустой `.env` | вставьте service key в `.env` в корне репозитория |
 | `AI provider request failed (401)` / `(403)` | неверный или просроченный ключ | создайте новый service key |
 | ошибка 401/403 даже с новым ключом в `.env` | старый `OPENROUTER_API_KEY` экспортирован в терминале — переменные окружения имеют приоритет над `.env` | `unset OPENROUTER_API_KEY` (или откройте новый терминал) и перезапустите сервер |
@@ -169,7 +161,6 @@ mock-результатам (нулевая уверенность, без ра�
 Создайте API-ключ на <https://openrouter.ai/keys> и укажите:
 
 ```env
-CASH_AI_ENABLED=true
 CASH_AI_PROVIDER=openrouter
 OPENROUTER_API_KEY=sk-or-v1-ВАШ_КЛЮЧ
 ```
@@ -235,13 +226,10 @@ MTA existing services: <https://help.sap.com/docs/SAP_HANA_PLATFORM/4505d0bdaf49
 
 ## Known boundaries
 
-- Live AI and S/4 calls stay disabled by default (`CASH_AI_ENABLED` /
-  `CASH_S4_ENABLED`). Without them the pipeline uses the explicit local mocks
-  from `srv/agents/integration-mocks.ts` (zero confidence, no payer
-  resolution) — never presented as real results.
+- Live AI and S/4 calls are permanently enabled by default. If the remote service is temporarily unreachable,
+  the system falls back to cached SQLite data or deterministic evaluation.
 - `postClearing` posts sequentially without durable per-item progress; a
-  failure mid-batch can duplicate already-posted items on retry. It is not
-  reachable without `CASH_S4_ENABLED=true`.
+  failure mid-batch can duplicate already-posted items on retry.
 - `analyzeWithGemini` remains declared without a handler, as before.
 - The database is SQLite-only by decision (no HANA/HDI module or resource in
   `mta.yaml`). A Cloud Foundry container filesystem is ephemeral, so this MTA

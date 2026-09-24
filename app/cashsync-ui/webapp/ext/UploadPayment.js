@@ -12,9 +12,9 @@ sap.ui.define([
 	'sap/m/BusyDialog',
 	'sap/m/MessageToast',
 	'sap/m/MessageBox',
-	'sap/ui/core/Element',
-	'sap/ui/core/Component'
-], function (Dialog, Button, VBox, Text, FileUploader, BusyDialog, MessageToast, MessageBox, Element, Component) {
+	'sap/ui/core/Component',
+	'sap/ui/core/ElementRegistry'
+], function (Dialog, Button, VBox, Text, FileUploader, BusyDialog, MessageToast, MessageBox, Component, ElementRegistry) {
 	'use strict';
 
 	var oUploadDialog = null;
@@ -77,10 +77,10 @@ sap.ui.define([
 		}
 
 		// 4. From UIComponent registry
-		if (Component && typeof Component.get === 'function') {
+		if (Component && typeof Component.getComponentById === 'function') {
 			var aCompNames = ['container', 'poc.cash.cashsyncui'];
 			for (var i = 0; i < aCompNames.length; i++) {
-				var comp = Component.get(aCompNames[i]);
+				var comp = Component.getComponentById(aCompNames[i]);
 				if (comp && typeof comp.getModel === 'function') {
 					var m = comp.getModel();
 					if (m && typeof m.bindContext === 'function') return m;
@@ -89,8 +89,8 @@ sap.ui.define([
 		}
 
 		// 5. From Element registry (any control with default ODataModel)
-		if (Element && Element.registry && typeof Element.registry.all === 'function') {
-			var aAll = Element.registry.all();
+		if (ElementRegistry && typeof ElementRegistry.all === 'function') {
+			var aAll = ElementRegistry.all();
 			for (var sId in aAll) {
 				var oEl = aAll[sId];
 				if (oEl && typeof oEl.getModel === 'function') {
@@ -235,11 +235,11 @@ sap.ui.define([
 			var oItem = aFileContents[i];
 			oBusy.setText('AI analizuje dokument ' + (i + 1) + ' z ' + aFileContents.length + ' (' + oItem.name + ')…');
 
-			var oContext = oModel.bindContext('/uploadPayment(...)');
+			var oContext = oModel.bindContext('/uploadPayment(...)', null, { $$groupId: '$direct' });
 			oContext.setParameter('fileName', oItem.name);
 			oContext.setParameter('fileContent', oItem.base64);
 
-			oContext.execute().then(function () {
+			oContext.execute('$direct').then(function () {
 				var oBound = oContext.getBoundContext && oContext.getBoundContext();
 				var oResult = oBound && oBound.getObject ? oBound.getObject() : null;
 				aSuccesses.push(oItem.name + (oResult && oResult.ID ? ' (' + oResult.ID + ')' : ''));

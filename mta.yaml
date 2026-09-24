@@ -23,9 +23,6 @@ modules:
     parameters:
       memory: 512M
       disk-quota: 512M
-    properties:
-      CASH_AI_ENABLED: "true"
-      CASH_S4_ENABLED: "true"
     requires:
       - name: poc-cash-uaa
       - name: dest-service

@@ -15,6 +15,14 @@ entity Payments : cuid, managed {
   extractionConfidence : Decimal(3, 2);
   status     : String enum { extracted; matched; cleared; needsReview; } default 'extracted';
   rationale  : LargeString;
+  // AI execution analytics (tokens, costs, performance)
+  promptTokens       : Integer;
+  completionTokens   : Integer;
+  totalTokens        : Integer;
+  estimatedCost      : Decimal(10, 4);
+  capacityUnits      : Decimal(10, 4);
+  aiModel            : String(80);
+  processingTimeMs   : Integer;
   matches    : Composition of many ProposedMatches on matches.payment = $self;
   // FE-native Object Page tabs (UI.ReferenceFacet): each to-many nav prop
   // renders as a tab with its own LineItem table, no custom nav buttons.

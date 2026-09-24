@@ -57,6 +57,14 @@ export const ExtractedPaymentSchema = z.object({
   }),
   references: z.array(z.string()),
   extractionConfidence: z.number().min(0, 'extractionConfidence must be a number between 0 and 1').max(1, 'extractionConfidence must be a number between 0 and 1'),
+  promptTokens: z.number().optional(),
+  completionTokens: z.number().optional(),
+  totalTokens: z.number().optional(),
+  aiModel: z.string().optional(),
+  processingTimeMs: z.number().optional(),
+  estimatedCost: z.number().optional(),
+  capacityUnits: z.number().optional(),
+  rationale: z.string().optional(),
 });
 
 export type ExtractedPayment = z.infer<typeof ExtractedPaymentSchema>;
@@ -97,9 +105,12 @@ function validate(parsed: unknown): ExtractedPayment {
 
 export async function extractPayment(
   pdfBuffer: Buffer,
-  extract: (pdfBuffer: Buffer, prompt: string) => Promise<string> = extractDocument,
+  extract: (pdfBuffer: Buffer, prompt: string) => Promise<string | { content: string; usage?: { promptTokens: number; completionTokens: number; totalTokens: number }; model?: string }> = extractDocument,
 ): Promise<ExtractedPayment> {
-  const raw = await extract(pdfBuffer, EXTRACTION_PROMPT);
+  const result = await extract(pdfBuffer, EXTRACTION_PROMPT);
+  const raw = typeof result === 'string' ? result : result.content;
+  const usage = typeof result === 'object' ? result.usage : undefined;
+  const model = typeof result === 'object' ? result.model : undefined;
 
   let parsed: unknown;
   try {
@@ -108,5 +119,14 @@ export async function extractPayment(
     throw new Error(`Extraction result was not valid JSON: ${(err as Error).message}\nRaw response: ${raw}`);
   }
 
-  return validate(parsed);
+  const validated = validate(parsed);
+  if (usage) {
+    validated.promptTokens = usage.promptTokens;
+    validated.completionTokens = usage.completionTokens;
+    validated.totalTokens = usage.totalTokens;
+  }
+  if (model) {
+    validated.aiModel = model;
+  }
+  return validated;
 }

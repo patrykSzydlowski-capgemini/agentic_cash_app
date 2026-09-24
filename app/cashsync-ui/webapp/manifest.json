@@ -163,7 +163,7 @@
           "options": {
             "settings": {
               "contextPath": "/Payments",
-              "variantManagement": "Page",
+              "variantManagement": "Control",
               "initialLoad": "Enabled",
               "navigation": {
                 "Payments": {
@@ -171,6 +171,22 @@
                     "route": "PaymentsObjectPage"
                   }
                 }
+              },
+              "views": {
+                "paths": [
+                  {
+                    "key": "PaymentsTab",
+                    "label": "{i18n>tabPayments}",
+                    "annotationPath": "com.sap.vocabularies.UI.v1.SelectionPresentationVariant#AllPayments"
+                  },
+                  {
+                    "key": "AiAnalyticsTab",
+                    "label": "{i18n>tabAiAnalytics}",
+                    "entitySet": "AiAnalytics",
+                    "contextPath": "/AiAnalytics",
+                    "annotationPath": "com.sap.vocabularies.UI.v1.SelectionPresentationVariant#AiStats"
+                  }
+                ]
               },
               "controlConfiguration": {
                 "@com.sap.vocabularies.UI.v1.LineItem": {
@@ -182,7 +198,43 @@
                   "actions": {
                     "uploadPayment": {
                       "press": "poc.cash.cashsyncui.ext.UploadPayment.onUploadPayment",
-                      "text": "Wgraj awizo (PDF)",
+                      "text": "{i18n>actionUploadPayment}",
+                      "requiresSelection": false
+                    }
+                  }
+                },
+                "/AiAnalytics/@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable",
+                    "selectionMode": "None"
+                  },
+                  "actions": {
+                    "showKpis": {
+                      "press": "poc.cash.cashsyncui.ext.AiAnalyticsDashboard.onShowKpis",
+                      "text": "{i18n>actionShowKpis}",
+                      "requiresSelection": false
+                    },
+                    "refreshStats": {
+                      "press": "poc.cash.cashsyncui.ext.AiAnalyticsDashboard.onRefreshStats",
+                      "text": "{i18n>actionRefreshStats}",
+                      "requiresSelection": false
+                    }
+                  }
+                },
+                "AiAnalytics/@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable",
+                    "selectionMode": "None"
+                  },
+                  "actions": {
+                    "showKpis": {
+                      "press": "poc.cash.cashsyncui.ext.AiAnalyticsDashboard.onShowKpis",
+                      "text": "{i18n>actionShowKpis}",
+                      "requiresSelection": false
+                    },
+                    "refreshStats": {
+                      "press": "poc.cash.cashsyncui.ext.AiAnalyticsDashboard.onRefreshStats",
+                      "text": "{i18n>actionRefreshStats}",
                       "requiresSelection": false
                     }
                   }

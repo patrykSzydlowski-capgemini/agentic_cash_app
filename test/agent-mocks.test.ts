@@ -236,3 +236,29 @@ test('multi-invoice sum mismatch: multiple referenced invoices with different su
   assert.ok(matches.every((m) => m.matchScore === 0.5));
   assert.match(matches[0].rationale, /does not match the payment amount/);
 });
+
+test('ExtractedPaymentSchema supports capacityUnits, rationale, and usage metadata', async () => {
+  const { ExtractedPaymentSchema } = await import('../srv/agents/extraction-agent.js');
+  const validData = {
+    payer: 'Global Unknown Supplies Ltd.',
+    amount: 450.00,
+    currency: 'EUR',
+    valueDate: '2026-02-15',
+    references: [],
+    extractionConfidence: 0.85,
+    promptTokens: 1420,
+    completionTokens: 185,
+    totalTokens: 1605,
+    estimatedCost: 0.0003,
+    capacityUnits: 0.0003,
+    aiModel: 'gemini-2.5-flash',
+    rationale: 'Payment 450.00 EUR matches sum of invoices 0123456781 and 0123456783',
+  };
+  const parsed = ExtractedPaymentSchema.safeParse(validData);
+  assert.equal(parsed.success, true);
+  if (parsed.success) {
+    assert.equal(parsed.data.capacityUnits, 0.0003);
+    assert.equal(parsed.data.rationale, 'Payment 450.00 EUR matches sum of invoices 0123456781 and 0123456783');
+  }
+});
+

@@ -1,4 +1,4 @@
-import type { AIProvider } from './types.js'
+import type { AIExecutionResult, AIProvider } from './types.js'
 import { IntegrationUnavailableError, requireAIEnabled } from './config.js'
 
 export function providerName(): 'openrouter' | 'aicore' {
@@ -29,6 +29,24 @@ export async function extractDocument(pdfBuffer: Buffer, prompt: string): Promis
     return (await getProvider()).extractDocument(pdfBuffer, prompt)
 }
 
+export async function extractDocumentWithUsage(pdfBuffer: Buffer, prompt: string): Promise<AIExecutionResult> {
+    const provider = await getProvider()
+    if (provider.extractDocumentWithUsage) {
+        return provider.extractDocumentWithUsage(pdfBuffer, prompt)
+    }
+    const content = await provider.extractDocument(pdfBuffer, prompt)
+    return { content, model: activeModelName() }
+}
+
 export async function generateText(prompt: string): Promise<string> {
     return (await getProvider()).generateText(prompt)
+}
+
+export async function generateTextWithUsage(prompt: string): Promise<AIExecutionResult> {
+    const provider = await getProvider()
+    if (provider.generateTextWithUsage) {
+        return provider.generateTextWithUsage(prompt)
+    }
+    const content = await provider.generateText(prompt)
+    return { content, model: activeModelName() }
 }

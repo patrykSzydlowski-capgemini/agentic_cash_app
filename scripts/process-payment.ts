@@ -1,8 +1,7 @@
 // Full-pipeline check against a running local server (npm run dev):
 //   node --import tsx scripts/process-payment.ts [path/to/pdf.pdf]
 // Sends the PDF to CashSyncService.processPaymentDocument and prints the
-// stored payment with its proposed matches. Uses whatever the server has
-// configured: live AI when CASH_AI_ENABLED=true, explicit mocks otherwise.
+// stored payment with its proposed matches.
 import { loadEnvFile } from 'node:process'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
