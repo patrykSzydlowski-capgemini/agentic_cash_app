@@ -13,15 +13,6 @@ import { getOpenItems as getLiveOpenItems } from './s4/open-items-client.js'
 import { postClearing, type SapMessage, type ClearingResult } from './s4/clearing-client.js'
 import { activeModelName, calculateTokenCost, calculateCapacityUnits } from './genai/index.js'
 
-if (!process.env.VCAP_SERVICES) {
-    try {
-        // @ts-expect-error @sap/xsenv does not bundle type declarations
-        const xsenv = (await import('@sap/xsenv')).default
-        xsenv.loadEnv()
-    } catch {
-        // ignore if default-env.json missing
-    }
-}
 
 // Below this extractionConfidence the Matching Agent is skipped entirely
 // rather than run on shaky data, and the payment goes straight to needsReview.
@@ -731,8 +722,9 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             let totalTokens = promptTokens + completionTokens
             let usedModel = activeModelName()
 
+            let provider: any
             try {
-                const provider = await resolveProvider()
+                provider = await resolveProvider()
                 const aiResult = await runAiMatchingAgent(extracted, openItems, provider)
                 if (aiResult) {
                     finalCandidates = aiResult.candidates
@@ -749,19 +741,27 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
 
             // Fallback / deterministic evaluation if AI returned no match
             if (finalCandidates.length === 0 || finalCandidates.every(c => c.openItemId === '(brak dopasowania)')) {
-                const candidates = await proposeMatches(extracted, openItems)
-                const validMatches = candidates.filter(c => c.openItemId && c.matchStatus !== 'noMatch')
-                if (validMatches.length > 0) {
-                    finalCandidates = validMatches.map(c => ({
-                        ...c,
-                        matchScore: c.matchStatus === 'full' ? 0.95 : (c.matchStatus === 'probable' ? 0.75 : 0.50),
-                    }))
-                    const best = finalCandidates.reduce((acc, cur) => cur.matchScore > acc.matchScore ? cur : acc, finalCandidates[0])
-                    newScore = best.matchScore
-                    primaryRationale = best.rationale
-                } else if (finalCandidates.length === 0) {
-                    newScore = 0.25
-                    primaryRationale = candidates[0]?.rationale || 'No matching open item found in ERP.'
+                try {
+                    const generator = provider?.generateText || (async () => JSON.stringify({ matchedCustomerAccounts: [], rationale: 'No matching open item found in ERP.' }))
+                    const candidates = await proposeMatches(extracted, openItems, generator)
+                    const validMatches = candidates.filter(c => c.openItemId && c.matchStatus !== 'noMatch')
+                    if (validMatches.length > 0) {
+                        finalCandidates = validMatches.map(c => ({
+                            ...c,
+                            matchScore: c.matchStatus === 'full' ? 0.95 : (c.matchStatus === 'probable' ? 0.75 : 0.50),
+                        }))
+                        const best = finalCandidates.reduce((acc, cur) => cur.matchScore > acc.matchScore ? cur : acc, finalCandidates[0])
+                        newScore = best.matchScore
+                        primaryRationale = best.rationale
+                    } else if (finalCandidates.length === 0) {
+                        newScore = 0.25
+                        primaryRationale = candidates[0]?.rationale || 'No matching open item found in ERP.'
+                    }
+                } catch {
+                    if (finalCandidates.length === 0) {
+                        newScore = 0.25
+                        primaryRationale = 'No matching open item found in ERP.'
+                    }
                 }
             }
 

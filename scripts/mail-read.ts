@@ -4,27 +4,6 @@ import { simpleParser } from 'mailparser';
 import * as fs from 'fs';
 import * as path from 'path';
 
-/**
- * @sap-cloud-sdk/connectivity only reads process.env.VCAP_SERVICES —
- * it does NOT auto-load default-env.json (that's a CAP/cds convention).
- * This loads it manually when running locally/in BAS, outside Cloud Foundry.
- */
-function loadLocalVcapServices(): void {
-  if (process.env.VCAP_SERVICES) {
-    return; // already set (e.g. real Cloud Foundry runtime)
-  }
-  const envFile = path.resolve('default-env.json');
-  if (!fs.existsSync(envFile)) {
-    return;
-  }
-  const raw = JSON.parse(fs.readFileSync(envFile, 'utf-8'));
-  if (raw.VCAP_SERVICES) {
-    process.env.VCAP_SERVICES = JSON.stringify(raw.VCAP_SERVICES);
-    console.log('Loaded VCAP_SERVICES from default-env.json');
-  }
-}
-
-loadLocalVcapServices();
 
 interface MailDestinationProps {
   host: string;

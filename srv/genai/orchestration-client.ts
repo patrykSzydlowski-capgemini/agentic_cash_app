@@ -24,15 +24,6 @@ export function orchestrationConfig() {
 }
 
 const createClient: ClientFactory = async () => {
-    if (!process.env.VCAP_SERVICES) {
-        try {
-            // @ts-expect-error @sap/xsenv does not bundle type declarations
-            const xsenv = (await import('@sap/xsenv')).default
-            xsenv.loadEnv()
-        } catch {
-            // ignore if default-env.json is missing or invalid
-        }
-    }
     const { OrchestrationClient } = await import('@sap-ai-sdk/orchestration')
     const config = orchestrationConfig()
     const destination = config.destinationName

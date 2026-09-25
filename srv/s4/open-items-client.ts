@@ -39,15 +39,6 @@ export function toOpenItem(raw: Record<string, unknown>): OpenItem {
 export type HttpGet = (url: string) => Promise<unknown>;
 
 async function defaultHttpGet(url: string): Promise<unknown> {
-  if (!process.env.VCAP_SERVICES) {
-    try {
-      // @ts-expect-error @sap/xsenv does not bundle type declarations
-      const xsenv = (await import('@sap/xsenv')).default;
-      xsenv.loadEnv();
-    } catch {
-      // ignore
-    }
-  }
   const { executeHttpRequest } = await import('@sap-cloud-sdk/http-client');
   const cdsS4 = (global as any).cds?.env?.requires?.s4;
   const destinationName = process.env.S4_DESTINATION_NAME ?? cdsS4?.credentials?.destination ?? 'HD0_BAS';

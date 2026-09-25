@@ -100,61 +100,112 @@ disposable in-memory databases and stop their server after the tests.
 неиспользуемая альтернатива). Ошибка выбранного live-провайдера никогда не
 подменяется mock-результатом.
 
-### Быстрый старт: SAP AI Core / AI Hub — service key и запуск
+### Способ 1 (Рекомендуемый): Подключение через Cloud Foundry (`cds bind`)
+
+Этот способ позволяет не хранить секреты в файле `.env`, а динамически связывать локальное приложение с облачными сервисами в SAP BTP.
+
+1. **Авторизуйтесь в Cloud Foundry через SSO**:
+   ```sh
+   cf login -a https://api.cf.us10-001.hana.ondemand.com --sso
+   ```
+   - Перейдите по одноразовой ссылке в браузере, скопируйте временный код аутентификации и вставьте его в терминал.
+   - Выберите организацию: `Capgemini Polska Sp. z o.o._capgemini-tech-5-ut5z6aqv`
+   - Выберите пространство (space): `CashSync`
+
+2. **Проверьте целевое окружение и доступные сервисы**:
+   ```sh
+   cf target
+   cf services
+   ```
+   В выводе должны присутствовать инстансы `ai-core-srv` (план `extended`) и `dest-service` (план `lite`).
+
+3. **Свяжите сервисы с локальным проектом (`cds bind`)**:
+   Выполните команды в корне проекта:
+   ```sh
+   cds bind aicore -2 ai-core-srv:ai-core-key
+   cds bind destinations -2 dest-service:dest-service-key
+   ```
+   Эти команды сохранят привязки в локальный файл `.cdsrc-private.json` под профилем `[hybrid]`.
+
+4. **Сгенерируйте TypeScript-модели**:
+   ```sh
+   npm run cds:types
+   ```
+   *(Создает модели `@cds-models`, обязательные для работы бэкенда)*.
+
+5. **Запустите локальный сервер в гибридном режиме**:
+   ```sh
+   cds watch --profile hybrid
+   # или сокращенно:
+   cds w --profile hybrid
+   ```
+   *(Либо через npm: `npm run dev`, который запускает watch с in-memory базой).*
+
+   При старте с `--profile hybrid` CAP автоматически:
+   - Подключает облачные сервисы:
+     ```text
+     resolving cloud service bindings...
+     bound aicore to cf managed service ai-core-srv:ai-core-key
+     bound destinations to cf managed service dest-service:dest-service-key
+     ```
+   - Загружает TypeScript-хендлер: `impl: 'srv/cat-service.ts'`.
+
+6. **Проверьте работу AI и пайплайна**:
+   ```sh
+   npm run ai:check   # тестовый запрос к SAP AI Core (gemini-2.5-flash)
+   npm run ai:process # тестовый сквозной прогон извлечения и матчинга
+   ```
+   При успешном подключении `ai:check` выведет:
+   ```text
+   bound aicore to cf managed service ai-core-srv:ai-core-key
+   bound destinations to cf managed service dest-service:dest-service-key
+   Live extraction via aicore [model: gemini-2.5-flash] succeeded...
+   ```
+
+---
+
+### Способ 2 (Автономный): SAP AI Core — прямой service key в `.env`
+
+Если нет возможности авторизоваться через CF CLI:
 
 1. Получите SAP AI Core service key по официальной инструкции
    ([подключение SAP SDK](https://sap.github.io/ai-sdk/docs/js/connecting-to-ai-core)).
-2. В **корне репозитория** скопируйте шаблон и вставьте ключ в `.env`
-   (файл игнорируется Git; ключ — только в этот файл, не в `.env.example`):
+2. В **корне репозитория** скопируйте шаблон и вставьте ключ в `.env`:
    ```sh
    cp .env.example .env
    ```
    Затем откройте `.env` и приведите строки к виду:
    ```env
    CASH_AI_PROVIDER=aicore
-   AICORE_MODEL=имя-доступной-модели
+   AICORE_MODEL=gemini-2.5-flash
    AICORE_RESOURCE_GROUP=default
-   AICORE_SERVICE_KEY='{"clientid":"...","clientsecret":"...","url":"...","serviceurls":{"AI_API_URL":"..."}}'
+   AICORE_SERVICE_KEY='{"clientid":"...","clientsecret":"...","url":"...","serviceurls":{"ai_api_url":"..."}}'
    ```
-   `AICORE_SERVICE_KEY` — полный JSON service key в одну строку. Не добавляйте
-   его в `.env.example`, Git, `mta.yaml` или MTAR. Вместо локального service key
-   можно использовать `cds bind`/hybrid profile. В Cloud Foundry предпочтительна
-   нативная привязка AI Core: SDK сам читает binding из `VCAP_SERVICES`.
-3. Запустите проект и проверьте подключение:
+   `AICORE_SERVICE_KEY` — полный JSON service key в одну строку. Не добавляйте его в `.env.example`, Git, `mta.yaml` или MTAR.
+3. Запустите проект:
    ```sh
-   npm run dev        # терминал 1 — сервер на http://localhost:4004
-   npm run ai:check   # терминал 2 — отправляет fixture PDF в AI Core
-   npm run ai:process # терминал 2 — полный цикл: извлечение -> матчинг -> печать результатов
+   npm run dev
+   npm run ai:check
    ```
-   `ai:check` печатает `Live extraction via aicore succeeded` при успехе.
-   `ai:process` вызывает action `processPaymentDocument` на запущенном сервере
-   и печатает извлечённый платёж и предложенные матч-результаты (результаты
-   сохраняются в `Payments` / `ProposedMatches`). Другой PDF можно передать
-   аргументом: `npm run ai:process -- путь/к/файлу.pdf`.
-4. Дальше обычная работа: `npm run dev` + UI на
-   <http://localhost:4004>; данные кампании видны на
-   `/odata/v4/cash-sync/Payments` и `/odata/v4/cash-sync/ProposedMatches`.
-   В приложении очередь допасований — список Payments; кнопка
-   **«Wgraj awizo (PDF)»** отправляет PDF в action `uploadPayment` (тот же
-   AI-pipeline), сохраняет платёж и предложенные матчи. Стартовые данные
-   (`db/data/poc.cash-OpenItem.csv`) содержат позицию `0123456789` из
-   fixture PDF — при live AI она матчится детерминированно
-   (1000.00 EUR).
 
-Обе проверки могут передать внешнему провайдеру содержимое документа и вызвать
-расходы по аккаунту; запускайте их только осознанно. Содержимое документа и
-ключ в консоль не печатаются.
+---
+
+### Работа в интерфейсе (Fiori Elements UI)
+
+После запуска `npm run dev`:
+- Откройте <http://localhost:4004> и перейдите в UI `cashsync-ui`.
+- Вкладка **Payments** отображает очередь платежей.
+- Кнопка **«Wgraj awizo (PDF)»** позволяет загрузить одно или несколько awizo (например, `sample-awizo-50pct.pdf` или `sample-awizo-100pct.pdf`), отправляет файл в экшен `uploadPayment`, запускает AI-пайплайн и сохраняет результат матчинга.
+- Кнопка **«Przetestuj próbki dokumentów»** запускает пакетную валидацию всех 3 тестовых образцов.
 
 ### Если что-то не подключилось
 
 | Симптом | Причина | Что сделать |
 | --- | --- | --- |
-| 503 `AICORE_SERVICE_KEY is missing` | ключ не вставлен / пустой `.env` | вставьте service key в `.env` в корне репозитория |
-| `AI provider request failed (401)` / `(403)` | неверный или просроченный ключ | создайте новый service key |
-| ошибка 401/403 даже с новым ключом в `.env` | старый `OPENROUTER_API_KEY` экспортирован в терминале — переменные окружения имеют приоритет над `.env` | `unset OPENROUTER_API_KEY` (или откройте новый терминал) и перезапустите сервер |
-| `AI provider request failed (402)` | нет кредитов / исчерпана квота модели | пополните баланс или возьмите модель `:free` |
-| `AI provider request failed (404)` | модель недоступна | выберите другую в каталоге OpenRouter |
-| `Cannot reach http://localhost:4004` | сервер не запущен | сначала `npm run dev` |
+| 501 `Service "CashSyncService" has no handler for "uploadPayment"` | Не сгенерированы `@cds-models` | Выполните `npm run cds:types` |
+| 503 `Destination not found` / `AICORE binding missing` | Сервер запущен без профиля `hybrid` | Запускайте через `cds w --profile hybrid` |
+| `AI provider request failed (401)` / `(403)` | Неверный или отозванный сервисный ключ | Выполните `cds bind` заново (см. Способ 1) |
+| `Cannot reach http://localhost:4004` | Сервер не запущен | Запустите `cds w --profile hybrid` |
 
 ### Альтернатива: OpenRouter (не используется)
 
