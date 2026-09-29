@@ -27,8 +27,10 @@
   },
   "scripts": {
     "start": "cds-serve",
-    "watch": "cds bind --exec -- cds watch",
-    "dev": "cds bind --exec -- cds watch --in-memory",
+    "prewatch": "npm run cds:types",
+    "watch": "cds watch --profile hybrid",
+    "predev": "npm run cds:types",
+    "dev": "cds watch --profile hybrid --in-memory",
     "pretypecheck": "npm run cds:types",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:all": "tsc -p tsconfig.all.json --noEmit",
