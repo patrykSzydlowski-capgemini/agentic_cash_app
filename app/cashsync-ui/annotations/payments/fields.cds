@@ -1,0 +1,18 @@
+using CashSyncService as service from '../../../../srv/cat-service';
+
+annotate service.Payments with {
+    ID                   @title: '{i18n>fieldPaymentId}';
+    payer                @title: '{i18n>fieldPayer}';
+    amount               @title: '{i18n>fieldAmount}';
+    currency             @title: '{i18n>fieldCurrency}';
+    valueDate            @title: '{i18n>fieldValueDate}';
+    aiModel              @title: '{i18n>fieldAiModel}';
+    promptTokens         @title: '{i18n>fieldPromptTokens}';
+    completionTokens     @title: '{i18n>fieldCompletionTokens}';
+    totalTokens          @title: '{i18n>fieldTotalTokens}';
+    estimatedCost        @title: '{i18n>fieldEstimatedCost}';
+    extractionConfidence @title: '{i18n>fieldExtractionConfidence}';
+    status               @title: '{i18n>fieldStatus}';
+    rationale            @title: '{i18n>fieldRationale}';
+    processingTimeMs     @title: '{i18n>fieldProcessingTime}';
+};

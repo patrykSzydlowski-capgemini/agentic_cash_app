@@ -1,0 +1,7 @@
+@server = http://localhost:4004
+
+### Liveness Probe (Should return 200 UP)
+GET {{server}}/health/live
+
+### Readiness Probe (Checks SQLite, AI, S4 connectivity)
+GET {{server}}/health/ready

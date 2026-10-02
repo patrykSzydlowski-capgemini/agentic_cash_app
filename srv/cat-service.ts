@@ -12,12 +12,20 @@ import type { OpenItem } from './s4/open-items-client.js'
 import { getOpenItems as getLiveOpenItems } from './s4/open-items-client.js'
 import { postClearing, type SapMessage, type ClearingResult } from './s4/clearing-client.js'
 import { activeModelName, calculateTokenCost, calculateCapacityUnits } from './genai/index.js'
-
+import {
+    PAYMENT_STATUS,
+    PROPOSED_MATCH_STATUS,
+    MATCH_RESULT_STATUS,
+    REVIEW_STATUS,
+    CRITICALITY,
+    CONFIDENCE_THRESHOLDS
+} from './constants/index.js'
+import { ApplicationError } from './core/errors/ApplicationError.js'
 
 // Below this extractionConfidence the Matching Agent is skipped entirely
 // rather than run on shaky data, and the payment goes straight to needsReview.
 // 0.6 mirrors the reference ts-agentic-poc policy; revisit with usage data.
-export const LOW_CONFIDENCE_THRESHOLD = 0.6
+export const LOW_CONFIDENCE_THRESHOLD = CONFIDENCE_THRESHOLDS.LOW
 
 const { INSERT, UPDATE, SELECT, UPSERT } = cds.ql
 const LOG = cds.log('cash-service')
@@ -118,8 +126,8 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
                 : null
 
             let confidence = 0.50
-            let matchStatus = 'NEEDS_REVIEW'
-            let reviewStatus = 'PENDING'
+            let matchStatus: string = MATCH_RESULT_STATUS.NEEDS_REVIEW
+            let reviewStatus: string = REVIEW_STATUS.PENDING
             let actionRequired = true
             let reason = ''
 
@@ -160,9 +168,9 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 const parsed = JSON.parse(cleanJson)
 
                 confidence = typeof parsed.confidence === 'number' ? Math.round(parsed.confidence * 100) / 100 : 0.50
-                matchStatus = parsed.match_status || (confidence >= 0.85 ? 'MATCHED' : 'NEEDS_REVIEW')
-                reviewStatus = parsed.review_status || (matchStatus === 'MATCHED' ? 'APPROVED' : 'PENDING')
-                actionRequired = typeof parsed.action_required === 'boolean' ? parsed.action_required : matchStatus !== 'MATCHED'
+                matchStatus = parsed.match_status || (confidence >= CONFIDENCE_THRESHOLDS.AI_EVALUATION ? MATCH_RESULT_STATUS.MATCHED : MATCH_RESULT_STATUS.NEEDS_REVIEW)
+                reviewStatus = parsed.review_status || (matchStatus === MATCH_RESULT_STATUS.MATCHED ? REVIEW_STATUS.APPROVED : REVIEW_STATUS.PENDING)
+                actionRequired = typeof parsed.action_required === 'boolean' ? parsed.action_required : matchStatus !== MATCH_RESULT_STATUS.MATCHED
                 reason = String(parsed.reason || '')
                 LOG.info(`✅ [AI Re-validation] Completed in ${Date.now() - t0}ms: status=${matchStatus}, conf=${confidence}, reason="${reason}"`)
             } catch (err) {
@@ -217,9 +225,9 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
 
             await UPDATE.entity(DbMatchResult)
                 .set({
-                    match_status: 'MATCHED',
+                    match_status: MATCH_RESULT_STATUS.MATCHED,
                     action_required: false,
-                    review_status: 'APPROVED',
+                    review_status: REVIEW_STATUS.APPROVED,
                     review_reason: 'Ręcznie zatwierdzone przez operatora'
                 })
                 .where({ match_id: matchId })
@@ -232,7 +240,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
         // 2. Webhook / Action for external match ingestion
         this.on('ingestAgentMatch', async (req: Request) => {
             const { match_id, open_item_id, matched_amount, confidence, review_reason } = req.data as IngestAgentMatchPayload
-            const matchStatus = Number(confidence) > 0.8 ? 'MATCHED' : 'NEEDS_REVIEW'
+            const matchStatus = Number(confidence) > CONFIDENCE_THRESHOLDS.AGENT_MATCH ? MATCH_RESULT_STATUS.MATCHED : MATCH_RESULT_STATUS.NEEDS_REVIEW
 
             LOG.info(`[Ingest Match] Ingesting match ${match_id} for open item ${open_item_id} (amount: ${matched_amount}, confidence: ${confidence}) -> status: ${matchStatus}`)
 
@@ -1106,7 +1114,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             } else {
                 LOG.info(`✅ [S/4 Clearing] Posting succeeded! DocumentNumber: ${result.documentNumber}, PostingId: ${result.postingId}`)
                 await UPDATE.entity(ProposedMatches, ID).with({
-                    reviewStatus: 'posted',
+                    reviewStatus: PROPOSED_MATCH_STATUS.POSTED,
                     postingId: result.postingId,
                     documentNumber: result.documentNumber,
                     postingError: null,
@@ -1116,11 +1124,11 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                     const unpostedMatches = await SELECT.from(ProposedMatches)
                         .where({ payment_ID: match.payment_ID })
                         .and({ ID: { '!=': ID } })
-                        .and({ reviewStatus: { '!=': 'posted' } })
+                        .and({ reviewStatus: { '!=': PROPOSED_MATCH_STATUS.POSTED } })
 
                     if (unpostedMatches.length === 0) {
-                        await UPDATE.entity(Payments, match.payment_ID).with({ status: 'cleared' })
-                        LOG.info(`✅ [Review Action] All matches posted. Payment ${match.payment_ID} status set to "cleared".`)
+                        await UPDATE.entity(Payments, match.payment_ID).with({ status: PAYMENT_STATUS.CLEARED })
+                        LOG.info(`✅ [Review Action] All matches posted. Payment ${match.payment_ID} status set to "${PAYMENT_STATUS.CLEARED}".`)
                     } else {
                         LOG.info(`ℹ️ [Review Action] Payment ${match.payment_ID} still has ${unpostedMatches.length} unposted match(es).`)
                     }
@@ -1136,12 +1144,12 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             const match = await SELECT.one.from(ProposedMatches, ID)
             if (!match) {
                 LOG.warn(`[Review Action] ProposedMatches ${ID} not found.`)
-                return req.error(404, `ProposedMatches ${ID} not found.`)
+                throw new ApplicationError(`ProposedMatches ${ID} not found.`, 'MATCH_NOT_FOUND', 404)
             }
 
             LOG.info(`👤 [Review Action] Operator rejecting match ${ID} for open item ${match.openItemId}`)
-            await UPDATE.entity(ProposedMatches, ID).with({ reviewStatus: 'rejected' })
-            LOG.info(`✅ [Review Action] ProposedMatches ${ID} status set to "rejected"`)
+            await UPDATE.entity(ProposedMatches, ID).with({ reviewStatus: PROPOSED_MATCH_STATUS.REJECTED })
+            LOG.info(`✅ [Review Action] ProposedMatches ${ID} status set to "${PROPOSED_MATCH_STATUS.REJECTED}"`)
 
             return SELECT.one.from(ProposedMatches, ID)
         })

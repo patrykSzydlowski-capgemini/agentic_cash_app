@@ -4,6 +4,13 @@
   "description": "AI Agent Cash Matching Dashboard",
   "private": true,
   "type": "module",
+  "imports": {
+    "#constants": "./srv/constants/index.js",
+    "#core/*": "./srv/core/*.js"
+  },
+  "sapux": [
+    "app/cashsync-ui"
+  ],
   "dependencies": {
     "@cap-js/sqlite": "^3.1.0",
     "@sap-ai-sdk/orchestration": "^2.15.0",
@@ -40,13 +47,19 @@
     "pretest:built": "npm run build:server",
     "test:built": "node --import tsx --test test/*.test.ts",
     "build:server": "cds build --production && cds deploy --to sqlite:gen/srv/db.sqlite",
-    "build:mta": "npm run build:server && rm -rf approuter/resources && mkdir -p approuter/resources && cp -r app/cashsync-ui/webapp/. approuter/resources/",
+    "build:ui": "npm --prefix app/cashsync-ui run build",
+    "build:mta": "npm run build:server && npm run build:ui && rm -rf approuter/resources && mkdir -p approuter/resources && cp -r app/cashsync-ui/dist/. approuter/resources/",
     "ai:check": "cds bind --exec -- node --import tsx scripts/live-ai-check.ts",
     "ai:process": "node --import tsx scripts/process-payment.ts",
     "ai:cf:create": "node --import tsx scripts/configure-ai-cf.ts create",
     "ai:cf:update": "node --import tsx scripts/configure-ai-cf.ts update"
   },
   "cds": {
+    "server": {
+      "body_parser": {
+        "limit": "100mb"
+      }
+    },
     "requires": {
       "db": {
         "kind": "sqlite"

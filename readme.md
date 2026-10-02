@@ -70,6 +70,17 @@ integration.
 - `MatchResult` gained `confidence` and `review_reason`; `ingestAgentMatch`
   now persists both.
 
+## Enterprise CAP Architecture & Standards
+
+Detailed improvement roadmap and gap analysis against the DHL enterprise template: see [`docs/IMPROVEMENT_PLAN.md`](docs/IMPROVEMENT_PLAN.md).
+
+- **Modular UI Annotations**: `app/cashsync-ui/annotations/` (`payments/`, `matches/`, `openitems/`).
+- **Centralized Constants**: `srv/constants/index.ts` for all business statuses, match states, and criticality codes.
+- **Enterprise Error Handling**: `srv/core/errors/ApplicationError.ts` providing structured OData errors.
+- **Observability**: Health probes at `/health/live` and `/health/ready`.
+- **Structured Logging**: `cds.log('cash-sync')` context-aware logging.
+- **UI Tooling**: Clean UI5 build lifecycle with preload generation (`Component-preload.js`).
+
 ## Checks and production build
 
 ```sh

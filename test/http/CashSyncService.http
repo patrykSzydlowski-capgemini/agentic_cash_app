@@ -1,0 +1,23 @@
+@server = http://localhost:4004
+@service = {{server}}/odata/v4/cash-sync
+
+### Service Metadata
+GET {{service}}/$metadata
+
+### Read Payment Queue
+GET {{service}}/Payments?$top=5&$expand=matches
+
+### Read Match Results
+GET {{service}}/MatchResult?$top=5
+
+### Read Open Items
+GET {{service}}/OpenItem?$top=5
+
+### Validate Sample Remittance Advice (AI Pipeline)
+POST {{service}}/validateSampleDocument
+Content-Type: application/json
+
+{}
+
+### Get AI Execution Statistics
+GET {{service}}/getAiStatistics()

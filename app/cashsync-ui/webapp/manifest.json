@@ -42,7 +42,8 @@
         "sap.ui.core": {},
         "sap.fe.templates": {},
         "sap.f": {},
-        "sap.ui.unified": {}
+        "sap.ui.unified": {},
+        "sap.ui.codeeditor": {}
       }
     },
     "contentDensities": {
@@ -253,6 +254,18 @@
               "editableHeaderContent": false,
               "contextPath": "/Payments",
               "controlConfiguration": {
+                "@com.sap.vocabularies.UI.v1.Facets": {
+                  "sections": {
+                    "sectionAiContext": {
+                      "template": "poc.cash.cashsyncui.fragments.AIContextViewer",
+                      "title": "{i18n>facetAiReasoningContext}",
+                      "position": {
+                        "placement": "After",
+                        "anchor": "AiAnalyticsFacet"
+                      }
+                    }
+                  }
+                },
                 "matches/@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
                     "type": "ResponsiveTable",

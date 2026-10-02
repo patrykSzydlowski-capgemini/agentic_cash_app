@@ -295,3 +295,19 @@ test('reprocessWithAI on unknown/uncertain payment keeps status needsReview and 
     assert.ok(Number(updated.extractionConfidence) <= 0.60, 'Confidence must be capped at <= 0.60');
 });
 
+test('health probe: /health/live returns 200 UP', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/health/live`);
+    assert.equal(res.status, 200);
+    const data = await res.json() as { status: string };
+    assert.equal(data.status, 'UP');
+});
+
+test('health probe: /health/ready returns 200 UP with dependency details', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/health/ready`);
+    assert.equal(res.status, 200);
+    const data = await res.json() as { status: string; checks: { database: boolean } };
+    assert.equal(data.status, 'UP');
+    assert.equal(data.checks.database, true);
+});
+
+

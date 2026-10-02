@@ -2,6 +2,8 @@ node_modules/
 target/
 _out/
 gen/
+dist/
+app/*/dist/
 
 .cdsrc-private.json
 default-*.json
