@@ -7,8 +7,8 @@
     "applicationVersion": {
       "version": "0.0.1"
     },
-    "title": "Dopasowania Płatności AI",
-    "description": "Aplikacja do automatycznego dopasowywania płatności",
+    "title": "{{appTitle}}",
+    "description": "{{appDescription}}",
     "dataSources": {
       "mainService": {
         "uri": "/odata/v4/cash-sync/",
@@ -29,12 +29,6 @@
     }
   },
   "sap.ui5": {
-    "rootView": {
-      "viewName": "sap.fe.templates.RootContainer.view.Fcl",
-      "type": "XML",
-      "async": true,
-      "id": "appRootView"
-    },
     "dependencies": {
       "minUI5Version": "1.108.0",
       "libs": {
@@ -69,8 +63,7 @@
     },
     "routing": {
       "config": {
-        "fullWidth": true,
-        "routerClass": "sap.f.routing.Router"
+        "fullWidth": true
       },
       "routes": [
         {

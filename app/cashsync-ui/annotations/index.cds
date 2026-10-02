@@ -9,14 +9,18 @@ using from './payments/list';
 using from './payments/page';
 
 using from './matches/entity';
+using from './matches/fields';
 using from './matches/list';
 using from './matches/page';
 
 using from './match-result/entity';
+using from './match-result/fields';
 using from './match-result/list';
 using from './match-result/actions';
 
 using from './analytics/entity';
+using from './analytics/fields';
 using from './analytics/list';
 
+using from './openitems/fields';
 using from './openitems/list';

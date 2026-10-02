@@ -13,7 +13,18 @@ entity Payments : cuid, managed {
   // Agent 2's self-reported confidence (0.00-1.00), persisted as-is; policy
   // decisions (e.g. routing to review) belong to the service layer.
   extractionConfidence : Decimal(3, 2);
-  status     : String enum { extracted; matched; cleared; needsReview; } default 'extracted';
+  status     : String enum {
+    @title: '{i18n>statusExtracted}'
+    extracted;
+    @title: '{i18n>statusMatched}'
+    matched;
+    @title: '{i18n>statusNeedsReview}'
+    needsReview;
+    @title: '{i18n>statusCleared}'
+    cleared;
+    @title: '{i18n>statusFailed}'
+    failed;
+  } default 'extracted';
   rationale  : LargeString;
   // AI execution analytics (tokens, costs, performance)
   promptTokens       : Integer;
@@ -38,8 +49,26 @@ entity ProposedMatches : cuid, managed {
   customerAccount : String(10);
   amount          : Decimal(15, 2);
   currency        : String(3);
-  matchStatus  : String enum { full; probable; toBeChecked; noMatch; };
-  reviewStatus : String enum { pending; approved; rejected; posted; } default 'pending';
+  matchStatus  : String enum {
+    @title: '{i18n>matchStatusFull}'
+    full;
+    @title: '{i18n>matchStatusProbable}'
+    probable;
+    @title: '{i18n>matchStatusToBeChecked}'
+    toBeChecked;
+    @title: '{i18n>matchStatusNoMatch}'
+    noMatch;
+  };
+  reviewStatus : String enum {
+    @title: '{i18n>reviewStatusPending}'
+    pending;
+    @title: '{i18n>reviewStatusApproved}'
+    approved;
+    @title: '{i18n>reviewStatusRejected}'
+    rejected;
+    @title: '{i18n>reviewStatusPosted}'
+    posted;
+  } default 'pending';
   matchScore   : Decimal(3, 2);
   rationale    : LargeString;
   postingId      : String(36);
@@ -51,10 +80,22 @@ entity ProposedMatches : cuid, managed {
 
 entity IngestionLog : cuid {
   timestamp             : Timestamp;
-  source                : String enum { mailbox; bankFeed; };
+  source                : String enum {
+    @title: '{i18n>sourceMailbox}'
+    mailbox;
+    @title: '{i18n>sourceBankFeed}'
+    bankFeed;
+  };
   subject               : String(255);
   filename              : String(255);
-  classificationDecision : String enum { relevant; notRelevant; needsReview; };
+  classificationDecision : String enum {
+    @title: '{i18n>decisionRelevant}'
+    relevant;
+    @title: '{i18n>decisionNotRelevant}'
+    notRelevant;
+    @title: '{i18n>decisionNeedsReview}'
+    needsReview;
+  };
   classificationReason  : LargeString;
   payment               : Association to Payments;
 }
