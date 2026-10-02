@@ -122,6 +122,14 @@ service CashSyncService {
     };
 
     // UI-facing upload entry point: raw PDF bytes (Buffer or base64 string).
+    @Common.SideEffects: {
+        TargetEntities: [
+            Payments,
+            ProposedMatches,
+            MatchResult,
+            AiAnalytics
+        ]
+    }
     action uploadPayment(fileName: String, fileContent: LargeBinary) returns Payments;
 
     // AI & S/4 pipeline: extract -> match -> persist.
@@ -130,6 +138,14 @@ service CashSyncService {
     // One-click sample validation from the UI: runs the same AI pipeline over
     // the bundled fixture PDF and stores the verdict in Payments/ProposedMatches
     // plus MatchResult rows visible in the main list report.
+    @Common.SideEffects: {
+        TargetEntities: [
+            Payments,
+            ProposedMatches,
+            MatchResult,
+            AiAnalytics
+        ]
+    }
     action validateSampleDocument() returns String;
 
     action ingestAgentMatch(

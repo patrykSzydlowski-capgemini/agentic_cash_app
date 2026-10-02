@@ -105,6 +105,35 @@ sap.ui.define([
 		return null;
 	}
 
+	function getText(sKey, aArgs, sFallback) {
+		try {
+			if (_oExtensionAPI && typeof _oExtensionAPI.getModel === 'function') {
+				var oI18n = _oExtensionAPI.getModel('i18n');
+				if (oI18n && typeof oI18n.getResourceBundle === 'function') {
+					return oI18n.getResourceBundle().getText(sKey, aArgs);
+				}
+			}
+			if (Component && typeof Component.getComponentById === 'function') {
+				var oComp = Component.getComponentById('container') || Component.getComponentById('poc.cash.cashsyncui');
+				if (oComp && typeof oComp.getModel === 'function') {
+					var oI18nComp = oComp.getModel('i18n');
+					if (oI18nComp && typeof oI18nComp.getResourceBundle === 'function') {
+						return oI18nComp.getResourceBundle().getText(sKey, aArgs);
+					}
+				}
+			}
+		} catch (e) {
+			// ignore and use fallback
+		}
+		var sRes = sFallback || sKey;
+		if (Array.isArray(aArgs)) {
+			aArgs.forEach(function (arg, idx) {
+				sRes = sRes.replace('{' + idx + '}', arg);
+			});
+		}
+		return sRes;
+	}
+
 	function onUploadPayment(oEvent, oContext) {
 		var oModel = findModel(this, oContext, oEvent);
 		if (oModel) {
@@ -117,26 +146,26 @@ sap.ui.define([
 				fileType: ['pdf'],
 				mimeType: ['application/pdf'],
 				multiple: true,
-				placeholder: 'Wybierz jedno lub więcej awizo PDF…',
+				placeholder: getText('uploadDialogPlaceholder', null, 'Wybierz jedno lub więcej awizo PDF…'),
 				width: '100%'
 			});
 			oUploadDialog = new Dialog({
-				title: 'Wgraj awizo płatnicze (PDF)',
+				title: getText('uploadDialogTitle', null, 'Wgraj awizo płatnicze (PDF)'),
 				content: new VBox({
 					items: [
 						oFileUploader,
-						new Text({ text: 'Możesz wybrać kilka plików PDF naraz (np. 3 pliki). Każdy dokument zostanie przeanalizowany przez pipeline AI i zapisany w kolejce.' })
+						new Text({ text: getText('uploadDialogHelpText', null, 'Możesz wybrać kilka plików PDF naraz. Każdy dokument zostanie przeanalizowany przez pipeline AI i zapisany w kolejce.') })
 					]
 				}),
 				beginButton: new Button({
-					text: 'Wgraj',
+					text: getText('uploadBtnConfirm', null, 'Wgraj'),
 					type: 'Emphasized',
 					press: function () {
 						onUploadConfirm(_oActiveModel || findModel(null, null, null));
 					}
 				}),
 				endButton: new Button({
-					text: 'Anuluj',
+					text: getText('uploadBtnCancel', null, 'Anuluj'),
 					press: function () {
 						oUploadDialog.close();
 					}
@@ -185,14 +214,14 @@ sap.ui.define([
 			|| (oFileUploader.oFileUpload && oFileUploader.oFileUpload.files);
 
 		if (!oFiles || oFiles.length === 0) {
-			MessageToast.show('Wybierz co najmniej jeden plik PDF.');
+			MessageToast.show(getText('uploadSelectFilePrompt', null, 'Wybierz co najmniej jeden plik PDF.'));
 			return;
 		}
 
 		var aFiles = Array.prototype.slice.call(oFiles);
 		var oBusy = new BusyDialog({
-			title: 'Przetwarzanie dokumentów…',
-			text: 'Odczytywanie ' + aFiles.length + ' plik(ów)…'
+			title: getText('uploadBusyTitle', null, 'Przetwarzanie dokumentów…'),
+			text: getText('uploadBusyReading', [aFiles.length], 'Odczytywanie ' + aFiles.length + ' plik(ów)…')
 		});
 		oBusy.open();
 		oUploadDialog.close();
@@ -208,7 +237,7 @@ sap.ui.define([
 	function processFilesSequentially(oModel, aFileContents, oBusy) {
 		if (!oModel) {
 			oBusy.close();
-			MessageBox.error('Brak modelu OData — odśwież stronę.');
+			MessageBox.error(getText('uploadModelError', null, 'Brak modelu OData — odśwież stronę.'));
 			return;
 		}
 
@@ -218,9 +247,9 @@ sap.ui.define([
 		function processNext(i) {
 			if (i >= aFileContents.length) {
 				oBusy.close();
-				var sSummary = 'Pomyślnie przetworzono ' + aSuccesses.length + ' z ' + aFileContents.length + ' dokumentów.';
+				var sSummary = getText('uploadSuccessSummary', [aSuccesses.length, aFileContents.length], 'Pomyślnie przetworzono ' + aSuccesses.length + ' z ' + aFileContents.length + ' dokumentów.');
 				if (aErrors.length > 0) {
-					MessageBox.warning(sSummary + '\n\nBłędy (' + aErrors.length + '):\n- ' + aErrors.join('\n- '));
+					MessageBox.warning(sSummary + '\n\n' + getText('uploadErrorsTitle', [aErrors.length, aErrors.join('\n- ')], 'Błędy (' + aErrors.length + '):\n- ' + aErrors.join('\n- ')));
 				} else {
 					MessageToast.show(sSummary);
 				}
@@ -233,7 +262,7 @@ sap.ui.define([
 			}
 
 			var oItem = aFileContents[i];
-			oBusy.setText('AI analizuje dokument ' + (i + 1) + ' z ' + aFileContents.length + ' (' + oItem.name + ')…');
+			oBusy.setText(getText('uploadBusyProgress', [i + 1, aFileContents.length, oItem.name], 'AI analizuje dokument ' + (i + 1) + ' z ' + aFileContents.length + ' (' + oItem.name + ')…'));
 
 			var oContext = oModel.bindContext('/uploadPayment(...)', null, { $$groupId: '$direct' });
 			oContext.setParameter('fileName', oItem.name);

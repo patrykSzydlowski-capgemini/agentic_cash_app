@@ -6,7 +6,9 @@
   "type": "module",
   "imports": {
     "#constants": "./srv/constants/index.js",
-    "#core/*": "./srv/core/*.js"
+    "#core/*": "./srv/core/*.js",
+    "#repository/*": "./srv/repository/*.js",
+    "#repository": "./srv/repository/index.js"
   },
   "sapux": [
     "app/cashsync-ui"

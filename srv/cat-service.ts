@@ -21,6 +21,7 @@ import {
     CONFIDENCE_THRESHOLDS
 } from './constants/index.js'
 import { ApplicationError } from './core/errors/ApplicationError.js'
+import { paymentsRepository } from './repository/index.js'
 
 // Below this extractionConfidence the Matching Agent is skipped entirely
 // rather than run on shaky data, and the payment goes straight to needsReview.
@@ -284,7 +285,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             } catch (err) {
                 LOG.warn(`[ERP Open Items] Failed to fetch live items from S/4HANA (${(err as Error).message}). Using cached open items.`)
             }
-            const rows = await SELECT.from(DbOpenItem)
+            const rows = await paymentsRepository.findAllCachedOpenItems()
             LOG.info(`[ERP Open Items] Active open items pool: ${rows.length} item(s)`)
             return rows.map((row: Record<string, unknown>) => ({
                 openItemId: String(row.OpenItemId),
@@ -582,7 +583,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             const primaryRationale = payment.rationale || candidates[0]?.rationale || 'Brak propozycji dopasowania.'
 
             LOG.info(`💾 [Step 3/3: Persistence] Saving payment ${paymentId} with status="${status}", confidence=${effectiveConfidence} (${persistedCandidates.length} candidate(s) stored)...`)
-            await INSERT.into(Payments).entries({
+            await paymentsRepository.insertPayment({
                 ID: paymentId,
                 payer: payment.payer,
                 amount: payment.amount,
@@ -601,7 +602,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 processingTimeMs: payment.processingTimeMs,
             })
             if (persistedCandidates.length > 0) {
-                await INSERT.into(ProposedMatches).entries(persistedCandidates.map(candidate => ({
+                await paymentsRepository.insertProposedMatches(persistedCandidates.map(candidate => ({
                     payment_ID: paymentId,
                     openItemId: candidate.openItemId,
                     companyCode: candidate.companyCode || '1000',
@@ -778,9 +779,9 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             const newStatus = (newScore >= 0.6 && hasRealMatch && !hasUncertainCandidates) ? 'matched' : 'needsReview'
 
             // Replace proposed matches for this payment
-            await DELETE.from(ProposedMatches).where({ payment_ID: ID })
+            await paymentsRepository.deleteProposedMatchesByPaymentId(ID)
             if (hasRealMatch) {
-                await INSERT.into(ProposedMatches).entries(finalCandidates.filter(c => c.openItemId && c.openItemId !== '(brak dopasowania)').map(c => ({
+                await paymentsRepository.insertProposedMatches(finalCandidates.filter(c => c.openItemId && c.openItemId !== '(brak dopasowania)').map(c => ({
                     payment_ID: ID,
                     openItemId: c.openItemId,
                     companyCode: c.companyCode || '1000',
@@ -793,7 +794,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                     rationale: c.rationale || primaryRationale || `AI rewalidacja: status ${c.matchStatus} z oceną ${c.matchScore.toFixed(2)}.`,
                 })))
             } else {
-                await INSERT.into(ProposedMatches).entries({
+                await paymentsRepository.insertProposedMatches([{
                     payment_ID: ID,
                     openItemId: '(brak dopasowania)',
                     companyCode: '1000',
@@ -804,7 +805,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                     matchScore: newScore,
                     reviewStatus: 'pending',
                     rationale: primaryRationale || `AI rewalidacja: brak dopasowania (ocena ${newScore.toFixed(2)}).`,
-                })
+                }])
             }
 
             const oldScore = Number(payment.extractionConfidence ?? 0).toFixed(2)
@@ -853,8 +854,8 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 return req.error(400, `Płatność dla ${payment.payer} została już wcześniej zaksięgowana w S/4HANA.`)
             }
 
-            const matches = await SELECT.from(ProposedMatches).where({ payment_ID: ID })
-            const validMatches = matches.filter((m: any) => m.openItemId && m.openItemId !== '(brak dopasowania)' && m.openItemId !== '')
+            const matches = await paymentsRepository.findMatchesByPaymentId(ID)
+            const validMatches = (matches as any[]).filter((m: any) => m.openItemId && m.openItemId !== '(brak dopasowania)' && m.openItemId !== '')
 
             if (validMatches.length === 0) {
                 LOG.warn(`[Manual Post] No valid open item associated with payment ${ID}.`)
@@ -925,12 +926,10 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             }
 
             if (!hasFailures) {
-                const remainingUnposted = await SELECT.from(ProposedMatches)
-                    .where({ payment_ID: ID })
-                    .and({ reviewStatus: { '!=': 'posted' } })
+                const remainingUnposted = await paymentsRepository.findUnpostedMatchesByPaymentId(ID)
 
                 if (remainingUnposted.length === 0) {
-                    await UPDATE.entity(Payments, ID).with({
+                    await paymentsRepository.updatePayment(ID, {
                         status: 'cleared',
                     })
                     LOG.info(`✅ [Manual Post] All items posted. Payment ${ID} status updated to "cleared"`)
@@ -938,7 +937,8 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
                 req.notify(`Płatność (${payment.payer}) została pomyślnie zaksięgowana w S/4HANA (${docNumbers.length} pozycji). Nr dok.: ${docNumbers.join(', ')}`)
                 return SELECT.one.from(Payments, ID)
-            } else {
+            }
+ else {
                 LOG.warn(`⚠️ [Manual Post] Partial or complete failure during posting for payment ${ID}`)
                 return req.error(502, `Błąd księgowania w S/4HANA: część pozycji nie została zaksięgowana.`)
             }
@@ -979,8 +979,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
         }
 
         this.on('getAiStatistics', async () => {
-            const { Payments } = cds.entities('poc.cashapp')
-            const payments = await SELECT.from(Payments)
+            const payments = await paymentsRepository.findAllPayments() as any[]
             const promptArr: number[] = []
             const completionArr: number[] = []
             const tokensArr: number[] = []
@@ -1120,14 +1119,10 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                     postingError: null,
                 })
                 if (match.payment_ID) {
-                    const { Payments } = cds.entities('poc.cashapp')
-                    const unpostedMatches = await SELECT.from(ProposedMatches)
-                        .where({ payment_ID: match.payment_ID })
-                        .and({ ID: { '!=': ID } })
-                        .and({ reviewStatus: { '!=': PROPOSED_MATCH_STATUS.POSTED } })
+                    const unpostedMatches = await paymentsRepository.findOtherUnpostedMatches(match.payment_ID, ID) as any[]
 
                     if (unpostedMatches.length === 0) {
-                        await UPDATE.entity(Payments, match.payment_ID).with({ status: PAYMENT_STATUS.CLEARED })
+                        await paymentsRepository.updatePayment(match.payment_ID, { status: PAYMENT_STATUS.CLEARED })
                         LOG.info(`✅ [Review Action] All matches posted. Payment ${match.payment_ID} status set to "${PAYMENT_STATUS.CLEARED}".`)
                     } else {
                         LOG.info(`ℹ️ [Review Action] Payment ${match.payment_ID} still has ${unpostedMatches.length} unposted match(es).`)

@@ -29,6 +29,12 @@
     }
   },
   "sap.ui5": {
+    "rootView": {
+      "viewName": "sap.fe.templates.RootContainer.view.Fcl",
+      "type": "XML",
+      "async": true,
+      "id": "appRootView"
+    },
     "dependencies": {
       "minUI5Version": "1.108.0",
       "libs": {
@@ -63,7 +69,8 @@
     },
     "routing": {
       "config": {
-        "fullWidth": true
+        "fullWidth": true,
+        "routerClass": "sap.f.routing.Router"
       },
       "routes": [
         {
@@ -130,7 +137,14 @@
                   "tableSettings": {
                     "type": "ResponsiveTable",
                     "selectionMode": "Multi",
-                    "selectAll": true
+                    "selectAll": true,
+                    "enableExport": true,
+                    "personalization": {
+                      "column": true,
+                      "sort": true,
+                      "filter": true,
+                      "group": true
+                    }
                   }
                 }
               }
@@ -187,7 +201,14 @@
                   "tableSettings": {
                     "type": "ResponsiveTable",
                     "selectionMode": "Multi",
-                    "selectAll": true
+                    "selectAll": true,
+                    "enableExport": true,
+                    "personalization": {
+                      "column": true,
+                      "sort": true,
+                      "filter": true,
+                      "group": true
+                    }
                   },
                   "actions": {
                     "uploadPayment": {
@@ -200,7 +221,14 @@
                 "/AiAnalytics/@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
                     "type": "ResponsiveTable",
-                    "selectionMode": "None"
+                    "selectionMode": "None",
+                    "enableExport": true,
+                    "personalization": {
+                      "column": true,
+                      "sort": true,
+                      "filter": true,
+                      "group": true
+                    }
                   },
                   "actions": {
                     "showKpis": {
@@ -218,7 +246,14 @@
                 "AiAnalytics/@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
                     "type": "ResponsiveTable",
-                    "selectionMode": "None"
+                    "selectionMode": "None",
+                    "enableExport": true,
+                    "personalization": {
+                      "column": true,
+                      "sort": true,
+                      "filter": true,
+                      "group": true
+                    }
                   },
                   "actions": {
                     "showKpis": {
@@ -263,7 +298,14 @@
                   "tableSettings": {
                     "type": "ResponsiveTable",
                     "selectionMode": "Multi",
-                    "selectAll": true
+                    "selectAll": true,
+                    "enableExport": true,
+                    "personalization": {
+                      "column": true,
+                      "sort": true,
+                      "filter": true,
+                      "group": true
+                    }
                   }
                 }
               }
@@ -279,7 +321,22 @@
           "options": {
             "settings": {
               "navigation": {},
-              "contextPath": "/OpenItem"
+              "contextPath": "/OpenItem",
+              "controlConfiguration": {
+                "@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable",
+                    "selectionMode": "None",
+                    "enableExport": true,
+                    "personalization": {
+                      "column": true,
+                      "sort": true,
+                      "filter": true,
+                      "group": true
+                    }
+                  }
+                }
+              }
             }
           }
         },
@@ -291,7 +348,22 @@
           "options": {
             "settings": {
               "navigation": {},
-              "contextPath": "/IngestionLog"
+              "contextPath": "/IngestionLog",
+              "controlConfiguration": {
+                "@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable",
+                    "selectionMode": "None",
+                    "enableExport": true,
+                    "personalization": {
+                      "column": true,
+                      "sort": true,
+                      "filter": true,
+                      "group": true
+                    }
+                  }
+                }
+              }
             }
           }
         }
