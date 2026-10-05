@@ -52,7 +52,15 @@ service CashSyncService {
         action approveMatch() returns ProposedMatches;
         action rejectMatch() returns ProposedMatches;
     };
-    @readonly entity IngestionLog    as projection on app.IngestionLog;
+    @readonly entity IngestionLog    as projection on app.IngestionLog {
+        *,
+        case classificationDecision
+            when 'relevant'    then 3
+            when 'needsReview' then 2
+            when 'notRelevant' then 1
+            else 0
+        end as DecisionCriticality : Integer
+    };
 
     @readonly entity AiAnalytics     as projection on app.Payments {
         ID,
@@ -135,18 +143,18 @@ service CashSyncService {
     // AI & S/4 pipeline: extract -> match -> persist.
     action processPaymentDocument(pdfBase64: LargeString) returns String;
 
-    // One-click sample validation from the UI: runs the same AI pipeline over
-    // the bundled fixture PDF and stores the verdict in Payments/ProposedMatches
-    // plus MatchResult rows visible in the main list report.
+
+    // Mailbox Ingestion: Agent 1 reads AR mailbox -> Agent 2 extracts -> Agent 3 matches
     @Common.SideEffects: {
         TargetEntities: [
             Payments,
             ProposedMatches,
+            IngestionLog,
             MatchResult,
             AiAnalytics
         ]
     }
-    action validateSampleDocument() returns String;
+    action syncMailbox() returns array of IngestionLog;
 
     action ingestAgentMatch(
         match_id: String,

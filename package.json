@@ -54,7 +54,8 @@
     "ai:check": "cds bind --exec -- node --import tsx scripts/live-ai-check.ts",
     "ai:process": "node --import tsx scripts/process-payment.ts",
     "ai:cf:create": "node --import tsx scripts/configure-ai-cf.ts create",
-    "ai:cf:update": "node --import tsx scripts/configure-ai-cf.ts update"
+    "ai:cf:update": "node --import tsx scripts/configure-ai-cf.ts update",
+    "mail:sync": "node --import tsx scripts/sync-mailbox.ts"
   },
   "cds": {
     "server": {

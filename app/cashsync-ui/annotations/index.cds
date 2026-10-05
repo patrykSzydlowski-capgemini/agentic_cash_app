@@ -24,3 +24,7 @@ using from './analytics/list';
 
 using from './openitems/fields';
 using from './openitems/list';
+
+using from './ingestion/entity';
+using from './ingestion/fields';
+using from './ingestion/list';

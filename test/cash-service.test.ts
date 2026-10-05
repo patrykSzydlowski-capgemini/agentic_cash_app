@@ -73,9 +73,40 @@ async function post(path: string, payload: object) {
 test('metadata and seeded local entities are served', async () => {
     const metadata = await fetch(base + '/$metadata');
     assert.equal(metadata.status, 200);
-    assert.match(await metadata.text(), /CashSyncService/);
+    const defaultMeta = await metadata.text();
+    assert.match(defaultMeta, /CashSyncService/);
     assert.ok((await get('/OpenItem')).value.length >= 5);
     assert.equal((await get('/MatchResult')).value.length, 3);
+});
+
+test('OData metadata properly localizes annotations into Polish, German, and English without raw keys', async () => {
+    // Polish
+    const plRes = await fetch(base + '/$metadata?sap-locale=pl', {
+        headers: { 'Accept-Language': 'pl' }
+    });
+    assert.equal(plRes.status, 200);
+    const plMeta = await plRes.text();
+    assert.ok(plMeta.includes('Analityka wykonania AI i alokacja zasobów'), 'PL should localize facetAiAnalytics');
+    assert.ok(!plMeta.includes('String="facetAiAnalytics"'), 'PL should not contain raw facetAiAnalytics');
+    assert.ok(!plMeta.includes('{i18n>facetAiAnalytics}'), 'PL should not contain unparsed {i18n>facetAiAnalytics}');
+
+    // German
+    const deRes = await fetch(base + '/$metadata?sap-locale=de', {
+        headers: { 'Accept-Language': 'de' }
+    });
+    assert.equal(deRes.status, 200);
+    const deMeta = await deRes.text();
+    assert.ok(deMeta.includes('KI-Ausführungsanalytik &amp; Ressourcenkosten'), 'DE should localize facetAiAnalytics');
+    assert.ok(!deMeta.includes('String="facetAiAnalytics"'), 'DE should not contain raw facetAiAnalytics');
+
+    // English (default)
+    const enRes = await fetch(base + '/$metadata?sap-locale=en', {
+        headers: { 'Accept-Language': 'en' }
+    });
+    assert.equal(enRes.status, 200);
+    const enMeta = await enRes.text();
+    assert.ok(enMeta.includes('AI Execution Analytics &amp; Resource Costs'), 'EN should localize facetAiAnalytics');
+    assert.ok(!enMeta.includes('String="facetAiAnalytics"'), 'EN should not contain raw facetAiAnalytics');
 });
 
 test('triggerAIAgent updates the selected match and returns notification', async () => {

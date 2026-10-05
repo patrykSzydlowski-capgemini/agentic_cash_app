@@ -13,11 +13,5 @@ GET {{service}}/MatchResult?$top=5
 ### Read Open Items
 GET {{service}}/OpenItem?$top=5
 
-### Validate Sample Remittance Advice (AI Pipeline)
-POST {{service}}/validateSampleDocument
-Content-Type: application/json
-
-{}
-
 ### Get AI Execution Statistics
 GET {{service}}/getAiStatistics()

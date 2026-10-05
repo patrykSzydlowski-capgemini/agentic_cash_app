@@ -8,17 +8,21 @@ import { extractPayment } from './agents/extraction-agent.js'
 import type { ExtractedPayment } from './agents/extraction-agent.js'
 import { proposeMatches } from './agents/matching-agent.js'
 import type { ProposedMatchCandidate } from './agents/matching-agent.js'
+import { classifyMailboxItems } from './agents/ingestion-agent.js'
+import { listUnreadMailboxMessages } from './connectors/mailbox-client.js'
 import type { OpenItem } from './s4/open-items-client.js'
 import { getOpenItems as getLiveOpenItems } from './s4/open-items-client.js'
 import { postClearing, type SapMessage, type ClearingResult } from './s4/clearing-client.js'
-import { activeModelName, calculateTokenCost, calculateCapacityUnits } from './genai/index.js'
+import { activeModelName, calculateTokenCost, calculateCapacityUnits, generateTextWithUsage } from './genai/index.js'
 import {
     PAYMENT_STATUS,
     PROPOSED_MATCH_STATUS,
     MATCH_RESULT_STATUS,
     REVIEW_STATUS,
     CRITICALITY,
-    CONFIDENCE_THRESHOLDS
+    CONFIDENCE_THRESHOLDS,
+    INGESTION_SOURCE,
+    CLASSIFICATION_DECISION
 } from './constants/index.js'
 import { ApplicationError } from './core/errors/ApplicationError.js'
 import { paymentsRepository } from './repository/index.js'
@@ -33,12 +37,6 @@ const LOG = cds.log('cash-service')
 type ProcessPaymentDocumentPayload = Parameters<typeof processPaymentDocument>[0]
 type IngestAgentMatchPayload = Parameters<typeof ingestAgentMatch>[0]
 
-// Bundled remittance advice fixtures used by the UI's sample-validation button.
-const SAMPLE_FIXTURE_FILES = [
-    { file: 'sample-awizo-100pct.pdf', label: '100% Match' },
-    { file: 'sample-awizo-50pct.pdf', label: '~50-60% Partial Match' },
-    { file: 'sample-awizo-0pct.pdf', label: '0% No Match' },
-]
 
 interface PipelineResult {
     payment: ExtractedPayment
@@ -213,7 +211,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 .where({ match_id: matchId })
 
             LOG.info(`[AI Re-validation] MatchResult ${matchId} updated -> Status: ${matchStatus}, Confidence: ${confidence}`)
-            req.notify(`Agent AI przeanalizował pozycję ${matchId}: ${matchStatus} (${(confidence * 100).toFixed(0)}%)`)
+            req.notify('AI_ANALYSIS_COMPLETED', [matchId, matchStatus, (confidence * 100).toFixed(0)])
             return SELECT.one.from(DbMatchResult, matchId)
         })
 
@@ -234,7 +232,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 .where({ match_id: matchId })
 
             LOG.info(`[Operator Action] MatchResult ${matchId} updated -> Status: MATCHED, Review: APPROVED`)
-            req.notify(`Pozycja ${matchId} została zatwierdzona ręcznie przez operatora`)
+            req.notify('MANUAL_APPROVE_COMPLETED', [matchId])
             return SELECT.one.from(DbMatchResult, matchId)
         })
 
@@ -690,6 +688,92 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             return storeUpload(req, fileName, fileContent)
         })
 
+        // AR Mailbox Synchronization: Agent 1 polls/classifies -> Agent 2 extracts -> Agent 3 matches
+        let isSyncingMailbox = false
+
+        this.on('syncMailbox', async (req: Request) => {
+            if (isSyncingMailbox) {
+                return req.reject(409, 'Mailbox synchronization is already in progress.')
+            }
+            isSyncingMailbox = true
+            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+            LOG.info(`📬 [Mailbox Sync] Initiating AR mailbox polling & ingestion pipeline...`)
+
+            try {
+                const items = await classifyMailboxItems({
+                    listMessages: listUnreadMailboxMessages,
+                    hasLoggedMessage: async (msgId: string) => paymentsRepository.hasLoggedMessage(msgId),
+                    generateTextWithUsage,
+                })
+
+                const createdLogs: Array<Record<string, unknown>> = []
+
+                for (const item of items) {
+                    if (item.isDuplicate) {
+                        LOG.info(`[Mailbox Sync] Skipping already processed message ${item.messageId}`)
+                        continue
+                    }
+
+                    if (item.classification === CLASSIFICATION_DECISION.RELEVANT && item.pdfAttachments.length > 0) {
+                        for (const att of item.pdfAttachments) {
+                            let paymentId: string | null = null
+                            try {
+                                LOG.info(`🤖 [Mailbox Sync] Running extraction & matching for attachment "${att.filename}" (Message: ${item.messageId})`)
+                                const { payment, candidates, rawExtractionConfidence } = await runPipeline(att.content)
+                                const result = await persistPayment(payment, candidates, rawExtractionConfidence)
+                                paymentId = result.paymentId
+                            } catch (pipeErr) {
+                                LOG.error(`❌ [Mailbox Sync] Pipeline failed for attachment "${att.filename}": ${(pipeErr as Error).message}`)
+                            }
+
+                            const logEntry = {
+                                ID: randomUUID(),
+                                timestamp: new Date().toISOString(),
+                                source: INGESTION_SOURCE.MAILBOX,
+                                messageId: item.messageId,
+                                subject: item.subject,
+                                filename: att.filename,
+                                classificationDecision: item.classification,
+                                classificationReason: item.reason,
+                                payment_ID: paymentId,
+                            }
+                            await paymentsRepository.insertIngestionLog(logEntry)
+                            createdLogs.push(logEntry)
+                        }
+                    } else {
+                        // Not relevant, needs review, or no attachments
+                        const logEntry = {
+                            ID: randomUUID(),
+                            timestamp: new Date().toISOString(),
+                            source: INGESTION_SOURCE.MAILBOX,
+                            messageId: item.messageId,
+                            subject: item.subject,
+                            filename: item.pdfAttachments[0]?.filename ?? null,
+                            classificationDecision: item.classification,
+                            classificationReason: item.reason,
+                            payment_ID: null,
+                        }
+                        await paymentsRepository.insertIngestionLog(logEntry)
+                        createdLogs.push(logEntry)
+                    }
+                }
+
+                LOG.info(`🎉 [Mailbox Sync] Completed! Processed ${items.length} item(s), recorded ${createdLogs.length} audit entry(ies).`)
+                LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+                if (createdLogs.length > 0) {
+                    req.notify('SYNC_MAILBOX_SUCCESS', [createdLogs.length])
+                } else {
+                    req.notify('SYNC_MAILBOX_NO_NEW')
+                }
+                return createdLogs
+            } catch (err) {
+                LOG.error(`❌ [Mailbox Sync] Failed: ${(err as Error).message}`)
+                return req.reject(500, `Mailbox synchronization failed: ${(err as Error).message}`)
+            } finally {
+                isSyncingMailbox = false
+            }
+        })
+
         // Operator action: re-evaluates selected payment(s) against ERP open items via AI agent.
         this.on('reprocessWithAI', 'Payments', async (req: Request) => {
             const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
@@ -832,10 +916,12 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             LOG.info(`✅ [AI Re-validation] Completed for payment ${ID}`)
             LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
 
-            const toastMsg = hasRealMatch
-                ? `Rewalidacja AI (${payment.payer}): ocena ${updatedScore}, status: ${newStatus}, dopasowano ${finalCandidates.filter(c => c.openItemId && c.openItemId !== '(brak dopasowania)').length} pozycji: ${finalCandidates.filter(c => c.openItemId && c.openItemId !== '(brak dopasowania)').map(c => c.openItemId).join(', ')}`
-                : `Rewalidacja AI (${payment.payer}): ocena ${updatedScore}, status: ${newStatus} (brak dopasowania)`
-            req.notify(toastMsg)
+            const matchedItems = finalCandidates.filter(c => c.openItemId && c.openItemId !== '(brak dopasowania)')
+            if (hasRealMatch) {
+                req.notify('AI_REVALIDATION_MATCHED', [payment.payer, updatedScore, newStatus, matchedItems.length, matchedItems.map(c => c.openItemId).join(', ')])
+            } else {
+                req.notify('AI_REVALIDATION_NO_MATCH', [payment.payer, updatedScore, newStatus])
+            }
 
             return SELECT.one.from(Payments, ID)
         })
@@ -935,7 +1021,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                     LOG.info(`✅ [Manual Post] All items posted. Payment ${ID} status updated to "cleared"`)
                 }
                 LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-                req.notify(`Płatność (${payment.payer}) została pomyślnie zaksięgowana w S/4HANA (${docNumbers.length} pozycji). Nr dok.: ${docNumbers.join(', ')}`)
+                req.notify('PAYMENT_POSTED_S4', [payment.payer, docNumbers.length, docNumbers.join(', ')])
                 return SELECT.one.from(Payments, ID)
             }
  else {
@@ -1147,75 +1233,6 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             LOG.info(`✅ [Review Action] ProposedMatches ${ID} status set to "${PROPOSED_MATCH_STATUS.REJECTED}"`)
 
             return SELECT.one.from(ProposedMatches, ID)
-        })
-
-        // 5. One-click sample validation from the UI: runs the AI pipeline over
-        // all 3 sample remittance fixtures (100% exact match, ~50-60% partial match, 0% no match)
-        // and stores verdicts in MatchResult and Payments tables.
-        this.on('validateSampleDocument', async () => {
-            LOG.info(`🧪 [Sample Validation] Starting validation of 3 sample remittance fixtures...`)
-            const verdicts: string[] = []
-            let totalRowsWritten = 0
-
-            for (const fixture of SAMPLE_FIXTURE_FILES) {
-                let pdfBytes: Buffer
-                try {
-                    pdfBytes = await readFile(join(cds.root, fixture.file))
-                } catch {
-                    try {
-                        pdfBytes = await readFile(join(cds.root, 'test-fixtures', fixture.file))
-                    } catch {
-                        LOG.warn(`[Sample Validation] Could not load fixture: ${fixture.file}`)
-                        continue
-                    }
-                }
-
-                const { payment, candidates, openItems } = await runPipeline(pdfBytes)
-                const { paymentId } = await persistPayment(payment, candidates)
-                const itemsById = new Map(openItems.map(item => [item.openItemId, item]))
-
-                for (const candidate of candidates) {
-                    const hasItem = Boolean(candidate.openItemId)
-                    const item = hasItem ? itemsById.get(candidate.openItemId) : null
-                    const matched = candidate.matchStatus === 'full'
-                    const matchedAmount = item ? item.invoiceAmount : (candidate.amount || payment.amount)
-                    const variance = matched ? 0 : Math.round((matchedAmount - payment.amount) * 100) / 100
-                    const slug = hasItem ? candidate.openItemId : `NOMATCH-${Math.round(payment.amount)}`
-                    const matchId = `AI-VALID-${slug}`.slice(0, 36)
-
-                    const matchStatus = matched
-                        ? 'MATCHED'
-                        : (candidate.matchStatus === 'noMatch' ? 'REJECTED' : 'NEEDS_REVIEW')
-                    const reviewStatus = matched
-                        ? 'APPROVED'
-                        : (candidate.matchStatus === 'noMatch' ? 'REJECTED' : 'PENDING')
-
-                    await UPSERT.into(DbMatchResult).entries({
-                        match_id: matchId,
-                        open_item_OpenItemId: candidate.openItemId || null,
-                        matched_amount: matchedAmount,
-                        variance_amount: variance,
-                        match_status: matchStatus,
-                        review_status: reviewStatus,
-                        confidence: candidate.matchScore,
-                        review_reason: candidate.rationale.slice(0, 500),
-                        source_label: 'AI_SAMPLE_VALIDATION',
-                        action_required: !matched,
-                    })
-                    totalRowsWritten++
-                    verdicts.push(
-                        `- [${(candidate.matchScore * 100).toFixed(0)}%] ${payment.payer} (${payment.amount} ${payment.currency}) `
-                        + `-> ${matchStatus} (Score: ${candidate.matchScore}, Pozycja: ${candidate.openItemId || '(brak)'})`
-                    )
-                }
-            }
-
-            LOG.info(`🏁 [Sample Validation] Completed! Stored ${totalRowsWritten} verdict(s) across 3 sample records.`)
-            return [
-                `Walidacja 3 przykładowych awizo zakończona pomyślnie (${providerMode()}):`,
-                ...verdicts,
-                `Wszystkie 3 wpisy (100%, ~50-60%, 0%) zostały zapisane w tabeli Dopasowań oraz Płatności.`
-            ].join('\n')
         })
 
         // Cascade cleanup when Payments are deleted by user from the UI

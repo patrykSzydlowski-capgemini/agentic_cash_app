@@ -31,8 +31,8 @@ annotate service.Payments with @(
         },
         {
             $Type  : 'UI.DataFieldForAction',
-            Action : 'CashSyncService.validateSampleDocument',
-            Label  : '{i18n>actionValidateSample}'
+            Action : 'CashSyncService.EntityContainer/syncMailbox',
+            Label  : '{i18n>actionSyncMailbox}'
         },
         { $Type: 'UI.DataField', Value: payer,                Label: '{i18n>fieldPayer}',                ![@HTML5.CssDefaults]: {width: '16rem'} },
         { $Type: 'UI.DataField', Value: amount,               Label: '{i18n>fieldAmount}',               ![@HTML5.CssDefaults]: {width: '9rem'} },
