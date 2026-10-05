@@ -211,7 +211,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 .where({ match_id: matchId })
 
             LOG.info(`[AI Re-validation] MatchResult ${matchId} updated -> Status: ${matchStatus}, Confidence: ${confidence}`)
-            req.notify('AI_ANALYSIS_COMPLETED', [matchId, matchStatus, (confidence * 100).toFixed(0)])
+            req.notify('AI_ANALYSIS_COMPLETED', undefined, [String(matchId), String(matchStatus), (confidence * 100).toFixed(0)])
             return SELECT.one.from(DbMatchResult, matchId)
         })
 
@@ -232,7 +232,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 .where({ match_id: matchId })
 
             LOG.info(`[Operator Action] MatchResult ${matchId} updated -> Status: MATCHED, Review: APPROVED`)
-            req.notify('MANUAL_APPROVE_COMPLETED', [matchId])
+            req.notify('MANUAL_APPROVE_COMPLETED', undefined, [String(matchId)])
             return SELECT.one.from(DbMatchResult, matchId)
         })
 
@@ -761,7 +761,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 LOG.info(`🎉 [Mailbox Sync] Completed! Processed ${items.length} item(s), recorded ${createdLogs.length} audit entry(ies).`)
                 LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
                 if (createdLogs.length > 0) {
-                    req.notify('SYNC_MAILBOX_SUCCESS', [createdLogs.length])
+                    req.notify('SYNC_MAILBOX_SUCCESS', undefined, [createdLogs.length])
                 } else {
                     req.notify('SYNC_MAILBOX_NO_NEW')
                 }
@@ -918,9 +918,9 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
 
             const matchedItems = finalCandidates.filter(c => c.openItemId && c.openItemId !== '(brak dopasowania)')
             if (hasRealMatch) {
-                req.notify('AI_REVALIDATION_MATCHED', [payment.payer, updatedScore, newStatus, matchedItems.length, matchedItems.map(c => c.openItemId).join(', ')])
+                req.notify('AI_REVALIDATION_MATCHED', undefined, [payment.payer, updatedScore, newStatus, matchedItems.length, matchedItems.map(c => c.openItemId).join(', ')])
             } else {
-                req.notify('AI_REVALIDATION_NO_MATCH', [payment.payer, updatedScore, newStatus])
+                req.notify('AI_REVALIDATION_NO_MATCH', undefined, [payment.payer, updatedScore, newStatus])
             }
 
             return SELECT.one.from(Payments, ID)
@@ -1021,7 +1021,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                     LOG.info(`✅ [Manual Post] All items posted. Payment ${ID} status updated to "cleared"`)
                 }
                 LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-                req.notify('PAYMENT_POSTED_S4', [payment.payer, docNumbers.length, docNumbers.join(', ')])
+                req.notify('PAYMENT_POSTED_S4', undefined, [payment.payer, docNumbers.length, docNumbers.join(', ')])
                 return SELECT.one.from(Payments, ID)
             }
  else {
