@@ -60,3 +60,18 @@ export const CONFIDENCE_THRESHOLDS = Object.freeze({
     AI_EVALUATION: 0.85,
     LOW: 0.60
 } as const);
+
+export const INGESTION_SOURCE = Object.freeze({
+    MAILBOX: 'mailbox',
+    BANK_FEED: 'bankFeed'
+} as const);
+
+export type IngestionSource = typeof INGESTION_SOURCE[keyof typeof INGESTION_SOURCE];
+
+export const CLASSIFICATION_DECISION = Object.freeze({
+    RELEVANT: 'relevant',
+    NOT_RELEVANT: 'notRelevant',
+    NEEDS_REVIEW: 'needsReview'
+} as const);
+
+export type ClassificationDecision = typeof CLASSIFICATION_DECISION[keyof typeof CLASSIFICATION_DECISION];

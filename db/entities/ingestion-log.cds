@@ -11,6 +11,7 @@ entity IngestionLog : cuid {
     @title: '{i18n>sourceBankFeed}'
     bankFeed;
   };
+  messageId             : String(255);
   subject               : String(255);
   filename              : String(255);
   classificationDecision : String enum {

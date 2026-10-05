@@ -22,6 +22,10 @@ export class PaymentsRepository {
         return cds.entities('poc.cash').MatchResult
     }
 
+    private get ingestionLog() {
+        return cds.entities('poc.cashapp').IngestionLog
+    }
+
     async findPaymentById(id: string) {
         return SELECT.one.from(this.payments).where({ ID: id })
     }
@@ -83,6 +87,24 @@ export class PaymentsRepository {
 
     async insertMatchResult(entry: Record<string, unknown>) {
         return INSERT.into(this.matchResults).entries(entry)
+    }
+
+    async hasLoggedMessage(messageId: string): Promise<boolean> {
+        if (!messageId) return false
+        const existing = await SELECT.one.from(this.ingestionLog).where({ messageId })
+        return existing != null
+    }
+
+    async insertIngestionLog(entry: Record<string, unknown>) {
+        return INSERT.into(this.ingestionLog).entries(entry)
+    }
+
+    async findIngestionLogsByPaymentId(paymentId: string) {
+        return SELECT.from(this.ingestionLog).where({ payment_ID: paymentId }).orderBy('timestamp desc')
+    }
+
+    async findAllIngestionLogs(limit = 100) {
+        return SELECT.from(this.ingestionLog).orderBy('timestamp desc').limit(limit)
     }
 }
 

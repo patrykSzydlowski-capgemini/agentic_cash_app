@@ -28,4 +28,15 @@ cds.on('bootstrap', (app: any) => {
     });
 });
 
+cds.on('served', () => {
+    if (process.env.MAIL_POLLER_ENABLED === 'true') {
+        const intervalMs = Number(process.env.MAIL_POLL_INTERVAL_MS) || 300000;
+        import('./scheduler/IngestionScheduler.js').then(({ startMailPoller }) => {
+            startMailPoller(intervalMs);
+        }).catch((err) => {
+            logger.error('Failed to start mail poller:', err);
+        });
+    }
+});
+
 export default cds.server;
