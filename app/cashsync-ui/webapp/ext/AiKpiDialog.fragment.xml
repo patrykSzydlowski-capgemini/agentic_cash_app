@@ -1,105 +1,149 @@
 <core:FragmentDefinition
     xmlns="sap.m"
     xmlns:core="sap.ui.core"
-    xmlns:layout="sap.ui.layout"
-    xmlns:form="sap.ui.layout.form">
+    xmlns:cssgrid="sap.ui.layout.cssgrid"
+    xmlns:form="sap.ui.layout.form"
+    xmlns:f="sap.f">
     <Dialog
         id="aiKpiDialog"
         title="{i18n>kpiDialogTitle}"
-        contentWidth="720px"
+        contentWidth="920px"
         contentHeight="auto"
         resizable="true"
         draggable="true">
         <content>
             <VBox class="sapUiMediumMargin">
-                <!-- KPI Tiles Row -->
-                <layout:Grid
-                    defaultSpan="XL3 L3 M6 S12"
-                    hSpacing="1"
-                    vSpacing="1"
+                <!-- 2x2 Bento KPI Cards Grid: Generous ~420px width per card, zero truncation, balanced semantic rows -->
+                <cssgrid:CSSGrid
+                    gridTemplateColumns="repeat(auto-fit, minmax(360px, 1fr))"
+                    gridGap="1rem"
                     class="sapUiSmallMarginBottom">
-                    <!-- Total Tokens Tile -->
-                    <GenericTile
-                        header="{i18n>kpiTotalTokens}"
-                        subheader="{i18n>kpiTotalTokensSubtitle}"
-                        frameType="OneByOne">
-                        <tileContent>
-                            <TileContent unit="tokens">
-                                <content>
-                                    <NumericContent
-                                        value="{kpi>/totalTokensFormatted}"
-                                        valueColor="Good"
-                                        icon="sap-icon://chart-axis" />
-                                </content>
-                            </TileContent>
-                        </tileContent>
-                    </GenericTile>
+                    <!-- Card 1: Total Token Volume -->
+                    <f:Card>
+                        <f:content>
+                            <VBox class="sapUiMediumMargin">
+                                <HBox justifyContent="SpaceBetween" alignItems="Center">
+                                    <Title text="{i18n>kpiTotalTokens}" level="H4" titleStyle="H5" wrapping="true" />
+                                    <core:Icon
+                                        src="sap-icon://chart-axis"
+                                        size="1.5rem"
+                                        color="Marker"
+                                        decorative="true" />
+                                </HBox>
+                                <HBox alignItems="Baseline" class="sapUiSmallMarginTopBottom">
+                                    <ObjectNumber
+                                        number="{kpi>/totalTokensFormatted}"
+                                        unit="tokens"
+                                        state="Success"
+                                        emphasized="true"
+                                        class="sapMObjectNumberLarge" />
+                                </HBox>
+                                <Text
+                                    text="{i18n>kpiTotalTokensSubtitle}"
+                                    class="sapUiTextSecondary"
+                                    wrapping="true" />
+                            </VBox>
+                        </f:content>
+                    </f:Card>
 
-                    <!-- SAP Capacity Units Tile -->
-                    <GenericTile
-                        header="{i18n>kpiTotalCapacityUnits}"
-                        subheader="{i18n>kpiTotalCapacityUnitsSubtitle}"
-                        frameType="OneByOne">
-                        <tileContent>
-                            <TileContent unit="CU">
-                                <content>
-                                    <NumericContent
-                                        value="{kpi>/totalCapacityUnitsFormatted}"
-                                        valueColor="Good"
-                                        icon="sap-icon://performance" />
-                                </content>
-                            </TileContent>
-                        </tileContent>
-                    </GenericTile>
+                    <!-- Card 2: SAP Capacity Units -->
+                    <f:Card>
+                        <f:content>
+                            <VBox class="sapUiMediumMargin">
+                                <HBox justifyContent="SpaceBetween" alignItems="Center">
+                                    <Title text="{i18n>kpiTotalCapacityUnits}" level="H4" titleStyle="H5" wrapping="true" />
+                                    <core:Icon
+                                        src="sap-icon://performance"
+                                        size="1.5rem"
+                                        color="Positive"
+                                        decorative="true" />
+                                </HBox>
+                                <HBox alignItems="Baseline" class="sapUiSmallMarginTopBottom">
+                                    <ObjectNumber
+                                        number="{kpi>/totalCapacityUnitsFormatted}"
+                                        unit="CU"
+                                        state="Success"
+                                        emphasized="true"
+                                        class="sapMObjectNumberLarge" />
+                                </HBox>
+                                <Text
+                                    text="{i18n>kpiTotalCapacityUnitsSubtitle}"
+                                    class="sapUiTextSecondary"
+                                    wrapping="true" />
+                            </VBox>
+                        </f:content>
+                    </f:Card>
 
-                    <!-- Estimated Cost Tile -->
-                    <GenericTile
-                        header="{i18n>kpiTotalCost}"
-                        subheader="{i18n>kpiTotalCostSubtitle}"
-                        frameType="OneByOne">
-                        <tileContent>
-                            <TileContent unit="USD">
-                                <content>
-                                    <NumericContent
-                                        value="{kpi>/totalCostFormatted}"
-                                        scale="$"
-                                        valueColor="Critical"
-                                        icon="sap-icon://money-bills" />
-                                </content>
-                            </TileContent>
-                        </tileContent>
-                    </GenericTile>
+                    <!-- Card 3: Estimated Model Cost -->
+                    <f:Card>
+                        <f:content>
+                            <VBox class="sapUiMediumMargin">
+                                <HBox justifyContent="SpaceBetween" alignItems="Center">
+                                    <Title text="{i18n>kpiTotalCost}" level="H4" titleStyle="H5" wrapping="true" />
+                                    <core:Icon
+                                        src="sap-icon://money-bills"
+                                        size="1.5rem"
+                                        color="Critical"
+                                        decorative="true" />
+                                </HBox>
+                                <HBox alignItems="Baseline" class="sapUiSmallMarginTopBottom">
+                                    <ObjectNumber
+                                        number="{kpi>/totalCostFormattedWithCurrency}"
+                                        unit="USD"
+                                        state="Warning"
+                                        emphasized="true"
+                                        class="sapMObjectNumberLarge" />
+                                </HBox>
+                                <Text
+                                    text="{i18n>kpiTotalCostSubtitle}"
+                                    class="sapUiTextSecondary"
+                                    wrapping="true" />
+                            </VBox>
+                        </f:content>
+                    </f:Card>
 
-                    <!-- Processed Invoices Tile -->
-                    <GenericTile
-                        header="{i18n>kpiProcessedPayments}"
-                        subheader="{i18n>kpiProcessedSubtitle}"
-                        frameType="OneByOne">
-                        <tileContent>
-                            <TileContent unit="docs">
-                                <content>
-                                    <NumericContent
-                                        value="{kpi>/totalProcessed}"
-                                        valueColor="Neutral"
-                                        icon="sap-icon://document-text" />
-                                </content>
-                            </TileContent>
-                        </tileContent>
-                    </GenericTile>
-                </layout:Grid>
+                    <!-- Card 4: Processed Invoices -->
+                    <f:Card>
+                        <f:content>
+                            <VBox class="sapUiMediumMargin">
+                                <HBox justifyContent="SpaceBetween" alignItems="Center">
+                                    <Title text="{i18n>kpiProcessedPayments}" level="H4" titleStyle="H5" wrapping="true" />
+                                    <core:Icon
+                                        src="sap-icon://document-text"
+                                        size="1.5rem"
+                                        color="Neutral"
+                                        decorative="true" />
+                                </HBox>
+                                <HBox alignItems="Baseline" class="sapUiSmallMarginTopBottom">
+                                    <ObjectNumber
+                                        number="{kpi>/totalProcessedFormatted}"
+                                        unit="docs"
+                                        state="None"
+                                        emphasized="true"
+                                        class="sapMObjectNumberLarge" />
+                                </HBox>
+                                <Text
+                                    text="{i18n>kpiProcessedSubtitle}"
+                                    class="sapUiTextSecondary"
+                                    wrapping="true" />
+                            </VBox>
+                        </f:content>
+                    </f:Card>
+                </cssgrid:CSSGrid>
 
-                <!-- Detailed Breakdown Form: Averages & Medians -->
+                <!-- Detailed Breakdown Form: Averages, Medians, Telemetry -->
                 <form:SimpleForm
                     title="{i18n>tabAiAnalytics}"
                     editable="false"
                     layout="ResponsiveGridLayout"
-                    labelSpanXL="5"
-                    labelSpanL="5"
-                    labelSpanM="5"
+                    labelSpanXL="12"
+                    labelSpanL="12"
+                    labelSpanM="12"
                     labelSpanS="12"
-                    columnsXL="2"
-                    columnsL="2"
-                    columnsM="1">
+                    columnsXL="3"
+                    columnsL="3"
+                    columnsM="1"
+                    class="sapUiSmallMarginTop">
                     <form:content>
                         <!-- Averages Section -->
                         <core:Title text="{i18n>kpiGroupAverages}" />
@@ -110,7 +154,7 @@
                         <Text text="{kpi>/avgProcessingTimeSec} s ({kpi>/avgProcessingTimeMs} ms)" />
 
                         <Label text="{i18n>kpiAvgCost}" />
-                        <Text text="${kpi>/avgCostFormatted} USD" />
+                        <Text text="{kpi>/avgCostFormattedWithCurrency} USD" />
 
                         <Label text="{i18n>kpiAvgCU}" />
                         <Text text="{kpi>/avgCapacityUnitsFormatted} CU" />
@@ -124,7 +168,7 @@
                         <Text text="{kpi>/medianProcessingTimeSec} s ({kpi>/medianProcessingTimeMs} ms)" />
 
                         <Label text="{i18n>kpiMedianCost}" />
-                        <Text text="${kpi>/medianCostFormatted} USD" />
+                        <Text text="{kpi>/medianCostFormattedWithCurrency} USD" />
 
                         <Label text="{i18n>kpiMedianCU}" />
                         <Text text="{kpi>/medianCapacityUnitsFormatted} CU" />
@@ -154,6 +198,7 @@
             <Button
                 text="{i18n>actionRefreshStats}"
                 icon="sap-icon://refresh"
+                type="Emphasized"
                 press=".onRefreshKpiData" />
         </beginButton>
         <endButton>

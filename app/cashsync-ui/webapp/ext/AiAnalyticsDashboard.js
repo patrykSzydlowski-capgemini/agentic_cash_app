@@ -60,9 +60,11 @@ sap.ui.define([
                 totalCompletionTokensFormatted: formatNumber(completionTokens),
                 totalCost: totalCost,
                 totalCostFormatted: totalCost.toFixed(4),
+                totalCostFormattedWithCurrency: "$" + totalCost.toFixed(4),
                 totalCapacityUnits: totalCU,
                 totalCapacityUnitsFormatted: totalCU.toFixed(4),
                 totalProcessed: totalProcessed,
+                totalProcessedFormatted: formatNumber(totalProcessed),
 
                 // Mean / Average metrics
                 avgProcessingTimeMs: avgTimeMs,
@@ -75,6 +77,7 @@ sap.ui.define([
                 avgCompletionTokensFormatted: formatNumber(avgCompletion),
                 avgCost: avgCost,
                 avgCostFormatted: avgCost.toFixed(4),
+                avgCostFormattedWithCurrency: "$" + avgCost.toFixed(4),
                 avgCapacityUnits: avgCU,
                 avgCapacityUnitsFormatted: avgCU.toFixed(4),
 
@@ -89,14 +92,36 @@ sap.ui.define([
                 medianCompletionTokensFormatted: formatNumber(medCompletion),
                 medianCost: medCost,
                 medianCostFormatted: medCost.toFixed(4),
+                medianCostFormattedWithCurrency: "$" + medCost.toFixed(4),
                 medianCapacityUnits: medCU,
                 medianCapacityUnitsFormatted: medCU.toFixed(4),
 
                 activeModel: stats.activeModel || "gemini-2.5-flash"
             });
         } catch (err) {
-            MessageBox.error("Nie udało się pobrać statystyk AI: " + err.message);
+            MessageBox.error(getText("errorFetchingAiStats", [err.message], "Failed to retrieve AI statistics: " + err.message));
         }
+    }
+
+    function getText(sKey, aArgs, sFallback) {
+        try {
+            var oI18n = findI18nModel();
+            if (oI18n && typeof oI18n.getResourceBundle === "function") {
+                var oBundle = oI18n.getResourceBundle();
+                if (oBundle && typeof oBundle.getText === "function") {
+                    return oBundle.getText(sKey, aArgs);
+                }
+            }
+        } catch (e) {
+            // fallback
+        }
+        var sRes = sFallback || sKey;
+        if (Array.isArray(aArgs)) {
+            aArgs.forEach(function (arg, idx) {
+                sRes = sRes.replace("{" + idx + "}", arg);
+            });
+        }
+        return sRes;
     }
     function getComponentInstance(sId) {
         if (Component && typeof Component.getComponentById === 'function') {
@@ -189,7 +214,7 @@ sap.ui.define([
         },
 
         onRefreshStats: function (oContext, aSelectedContexts) {
-            MessageToast.show("Odświeżanie statystyk AI i tabeli...");
+            MessageToast.show(getText("toastRefreshingStats", null, "Refreshing AI statistics and table..."));
             loadStatistics();
             var oModel = findModel(this, oContext);
             if (oModel && typeof oModel.refresh === "function") {
@@ -198,7 +223,7 @@ sap.ui.define([
         },
 
         onRefreshKpiData: function () {
-            MessageToast.show("Pobieranie najnowszych wskaźników...");
+            MessageToast.show(getText("toastFetchingKpis", null, "Fetching latest AI performance metrics..."));
             loadStatistics();
         },
 
