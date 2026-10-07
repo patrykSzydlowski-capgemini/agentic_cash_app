@@ -32,7 +32,8 @@ annotate service.ProposedMatches actions {
                 'postingError'
             ],
             TargetEntities : [
-                'payment'
+                'payment',
+                '/CashSyncService.EntityContainer/OpenItem'
             ]
         }
     );
@@ -43,7 +44,8 @@ annotate service.ProposedMatches actions {
                 'ReviewCriticality'
             ],
             TargetEntities : [
-                'payment'
+                'payment',
+                '/CashSyncService.EntityContainer/OpenItem'
             ]
         }
     );

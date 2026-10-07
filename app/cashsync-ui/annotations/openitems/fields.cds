@@ -11,6 +11,8 @@ annotate service.OpenItem with {
     PostingDate         @title: '{i18n>fieldPostingDate}';
     DocumentDate        @title: '{i18n>fieldDocumentDate}';
     aiConfidence        @title: '{i18n>fieldAiPaidConfidence}';
+    aiConfidencePercent @title: '{i18n>fieldAiPaidConfidence}' @Measures.Unit: '%';
+    dismissed           @UI.Hidden;
     aiMatchStatus       @title: '{i18n>fieldAiMatchStatus}' @UI.Criticality: ConfidenceCriticality @UI.CriticalityRepresentation: #WithIcon;
     aiRationale         @title: '{i18n>fieldAiRationale}' @UI.MultiLineText;
     matchedPaymentCount @title: '{i18n>fieldMatchedPaymentCount}';
@@ -21,10 +23,11 @@ annotate service.OpenItem with {
 };
 
 annotate service.OpenItem with @(
+    // 0..100 integer: a missing assessment shows "0 %", not "of 1".
     UI.DataPoint #AiConfidence : {
-        Value                     : aiConfidence,
+        Value                     : aiConfidencePercent,
         Title                     : '{i18n>fieldAiPaidConfidence}',
-        TargetValue               : 1.0,
+        TargetValue               : 100,
         Visualization             : #Progress,
         Criticality               : ConfidenceCriticality,
         CriticalityRepresentation : #WithoutIcon

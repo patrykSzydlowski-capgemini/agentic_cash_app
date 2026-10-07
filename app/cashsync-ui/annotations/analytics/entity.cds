@@ -1,23 +1,24 @@
 using CashSyncService as service from '../../../../srv/cat-service';
 
-annotate service.AiAnalytics with @(
+// "AI Agent Performance" tab: one row per 3-agent pipeline run (read-only).
+annotate service.PipelineRuns with @(
     Capabilities.DeleteRestrictions : { Deletable : false },
     Capabilities.InsertRestrictions : { Insertable : false },
     Capabilities.UpdateRestrictions : { Updatable : false },
     UI.HeaderInfo : {
-        TypeName       : '{i18n>aiAnalyticsTypeName}',
-        TypeNamePlural : '{i18n>aiAnalyticsTypeNamePlural}',
-        Title          : { $Type: 'UI.DataField', Value: payer },
-        Description    : { $Type: 'UI.DataField', Value: aiModel }
+        TypeName       : '{i18n>pipelineRunTypeName}',
+        TypeNamePlural : '{i18n>pipelineRunTypeNamePlural}',
+        Title          : { $Type: 'UI.DataField', Value: trigger },
+        Description    : { $Type: 'UI.DataField', Value: startedAt }
     },
-    UI.SelectionPresentationVariant #AiStats : {
+    UI.SelectionPresentationVariant #PipelineRuns : {
         Text : '{i18n>tabAiAnalytics}',
         SelectionVariant : {
             SelectOptions : []
         },
         PresentationVariant : {
             SortOrder : [
-                { Property : createdAt, Descending : true }
+                { Property : startedAt, Descending : true }
             ],
             Visualizations : [
                 '@UI.LineItem'
@@ -25,7 +26,7 @@ annotate service.AiAnalytics with @(
         }
     },
     UI.SelectionFields : [
-        aiModel,
+        trigger,
         status
     ]
 );

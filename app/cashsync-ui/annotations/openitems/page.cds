@@ -5,7 +5,7 @@ annotate service.OpenItem with @(
         $Type : 'UI.FieldGroupType',
         Data  : [
             { $Type: 'UI.DataField', Value: aiMatchStatus,       Criticality: ConfidenceCriticality, Label: '{i18n>fieldAiMatchStatus}' },
-            { $Type: 'UI.DataField', Value: aiConfidence,        Label: '{i18n>fieldAiPaidConfidence}' },
+            { $Type: 'UI.DataField', Value: aiConfidencePercent, Label: '{i18n>fieldAiPaidConfidence}' },
             { $Type: 'UI.DataField', Value: matchedPaymentCount, Label: '{i18n>fieldMatchedPaymentCount}' },
             { $Type: 'UI.DataField', Value: matchedAmount,       Label: '{i18n>fieldMatchedAmount}' },
             { $Type: 'UI.DataField', Value: assessedAt,          Label: '{i18n>fieldAssessedAt}' },
@@ -51,15 +51,28 @@ annotate service.OpenItem with @(
     ]
 );
 
-// Payments (from remittance mails) that Agent 3 linked to this open item; review happens on the payment.
+// Payments (from remittance mails) that Agent 3 linked to this open item.
+// Review + S/4HANA posting happen here: approveMatch posts the clearing, rejectMatch drops the proposal.
 annotate service.ProposedMatches with @(
     UI.LineItem #OpenItemEvidence : [
+        {
+            $Type  : 'UI.DataFieldForAction',
+            Action : 'CashSyncService.approveMatch',
+            Label  : '{i18n>actionApproveAndPost}'
+        },
+        {
+            $Type  : 'UI.DataFieldForAction',
+            Action : 'CashSyncService.rejectMatch',
+            Label  : '{i18n>actionReject}'
+        },
         { $Type: 'UI.DataField', Value: payment.payer,     Label: '{i18n>fieldPayer}',        ![@HTML5.CssDefaults]: {width: '14rem'} },
         { $Type: 'UI.DataField', Value: payment.valueDate, Label: '{i18n>fieldValueDate}',    ![@HTML5.CssDefaults]: {width: '9rem'} },
         { $Type: 'UI.DataField', Value: amount,            Label: '{i18n>fieldAmount}',       ![@HTML5.CssDefaults]: {width: '10rem'} },
         { $Type: 'UI.DataField', Value: matchStatus,       Label: '{i18n>fieldMatchStatus}',  ![@HTML5.CssDefaults]: {width: '12rem'} },
         { $Type: 'UI.DataFieldForAnnotation', Target: '@UI.DataPoint#MatchScoreProgress', Label: '{i18n>fieldMatchScore}', ![@HTML5.CssDefaults]: {width: '10rem'} },
         { $Type: 'UI.DataField', Value: reviewStatus,      Criticality: ReviewCriticality, Label: '{i18n>fieldReviewStatus}', ![@HTML5.CssDefaults]: {width: '11rem'} },
-        { $Type: 'UI.DataField', Value: rationale,         Label: '{i18n>fieldRationale}',    ![@HTML5.CssDefaults]: {width: '28rem'} }
+        { $Type: 'UI.DataField', Value: rationale,         Label: '{i18n>fieldRationale}',    ![@HTML5.CssDefaults]: {width: '28rem'} },
+        { $Type: 'UI.DataField', Value: documentNumber,    Label: '{i18n>fieldDocumentNumber}', ![@HTML5.CssDefaults]: {width: '11rem'} },
+        { $Type: 'UI.DataField', Value: postingError,      Label: '{i18n>fieldPostingError}', ![@HTML5.CssDefaults]: {width: '20rem'} }
     ]
 );

@@ -9,17 +9,6 @@ annotate service.ProposedMatches with @(
         { $Type: 'UI.DataField', Value: matchStatus,       Label: '{i18n>fieldMatchStatus}',       ![@HTML5.CssDefaults]: {width: '10rem'} },
         { $Type: 'UI.DataFieldForAnnotation', Target: '@UI.DataPoint#MatchScoreProgress', Label: '{i18n>fieldMatchScore}', ![@HTML5.CssDefaults]: {width: '10rem'} },
         { $Type: 'UI.DataField', Value: reviewStatus,      Criticality: ReviewCriticality, Label: '{i18n>fieldReviewStatus}', ![@HTML5.CssDefaults]: {width: '11rem'} },
-        { $Type: 'UI.DataField', Value: rationale,         Label: '{i18n>fieldRationale}',         ![@HTML5.CssDefaults]: {width: '22rem'} },
-        // Per-row review actions
-        {
-            $Type  : 'UI.DataFieldForAction',
-            Action : 'CashSyncService.approveMatch',
-            Label  : '{i18n>actionApprove}'
-        },
-        {
-            $Type  : 'UI.DataFieldForAction',
-            Action : 'CashSyncService.rejectMatch',
-            Label  : '{i18n>actionReject}'
-        }
+        { $Type: 'UI.DataField', Value: rationale,         Label: '{i18n>fieldRationale}',         ![@HTML5.CssDefaults]: {width: '22rem'} }
     ]
 );

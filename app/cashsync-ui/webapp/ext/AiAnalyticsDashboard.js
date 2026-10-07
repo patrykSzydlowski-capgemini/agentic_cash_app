@@ -30,71 +30,39 @@ sap.ui.define([
             var data = await response.json();
             var stats = data.value || data;
 
-            var totalTokens = stats.totalTokens || 0;
-            var promptTokens = stats.totalPromptTokens || 0;
-            var completionTokens = stats.totalCompletionTokens || 0;
             var totalCost = Number(stats.totalCost || 0);
             var totalCU = Number(stats.totalCapacityUnits || 0);
-            var totalProcessed = stats.totalProcessed || 0;
+            var avgCost = Number(stats.avgCostPerRun || 0);
+            var avgDurationMs = stats.avgDurationMs || 0;
+            var medianDurationMs = stats.medianDurationMs || 0;
+            var lastRunDurationMs = stats.lastRunDurationMs || 0;
 
-            var avgTimeMs = stats.avgProcessingTimeMs || 0;
-            var avgTokens = stats.avgTokensPerPayment || 0;
-            var avgPrompt = stats.avgPromptTokens || 0;
-            var avgCompletion = stats.avgCompletionTokens || 0;
-            var avgCost = Number(stats.avgCost || 0);
-            var avgCU = Number(stats.avgCapacityUnits || 0);
-
-            var medTimeMs = stats.medianProcessingTimeMs || 0;
-            var medTokens = stats.medianTokensPerPayment || 0;
-            var medPrompt = stats.medianPromptTokens || 0;
-            var medCompletion = stats.medianCompletionTokens || 0;
-            var medCost = Number(stats.medianCost || 0);
-            var medCU = Number(stats.medianCapacityUnits || 0);
-
+            // All figures are aggregated over finished pipeline runs (PipelineRuns).
             _oKpiModel.setData({
-                totalTokens: totalTokens,
-                totalTokensFormatted: formatNumber(totalTokens),
-                totalPromptTokens: promptTokens,
-                totalPromptTokensFormatted: formatNumber(promptTokens),
-                totalCompletionTokens: completionTokens,
-                totalCompletionTokensFormatted: formatNumber(completionTokens),
-                totalCost: totalCost,
-                totalCostFormatted: totalCost.toFixed(4),
+                totalRunsFormatted: formatNumber(stats.totalRuns),
+                failedRunsFormatted: formatNumber(stats.failedRuns),
+                totalTokensFormatted: formatNumber(stats.totalTokens),
+                totalPromptTokensFormatted: formatNumber(stats.totalPromptTokens),
+                totalCompletionTokensFormatted: formatNumber(stats.totalCompletionTokens),
                 totalCostFormattedWithCurrency: "$" + totalCost.toFixed(4),
-                totalCapacityUnits: totalCU,
                 totalCapacityUnitsFormatted: totalCU.toFixed(4),
-                totalProcessed: totalProcessed,
-                totalProcessedFormatted: formatNumber(totalProcessed),
+                totalAiCallsFormatted: formatNumber(stats.totalAiCalls),
+                totalFilesExtractedFormatted: formatNumber(stats.totalFilesExtracted),
+                totalPaymentsEvaluatedFormatted: formatNumber(stats.totalPaymentsEvaluated),
+                totalPaymentsMatchedFormatted: formatNumber(stats.totalPaymentsMatched),
 
-                // Mean / Average metrics
-                avgProcessingTimeMs: avgTimeMs,
-                avgProcessingTimeSec: (avgTimeMs / 1000).toFixed(1),
-                avgTokensPerPayment: avgTokens,
-                avgTokensPerPaymentFormatted: formatNumber(avgTokens),
-                avgPromptTokens: avgPrompt,
-                avgPromptTokensFormatted: formatNumber(avgPrompt),
-                avgCompletionTokens: avgCompletion,
-                avgCompletionTokensFormatted: formatNumber(avgCompletion),
-                avgCost: avgCost,
-                avgCostFormatted: avgCost.toFixed(4),
+                avgDurationSec: (avgDurationMs / 1000).toFixed(1),
+                avgTokensPerRunFormatted: formatNumber(stats.avgTokensPerRun),
                 avgCostFormattedWithCurrency: "$" + avgCost.toFixed(4),
-                avgCapacityUnits: avgCU,
-                avgCapacityUnitsFormatted: avgCU.toFixed(4),
+                avgTokensPerFileFormatted: formatNumber(stats.avgTokensPerFile),
 
-                // Median metrics
-                medianProcessingTimeMs: medTimeMs,
-                medianProcessingTimeSec: (medTimeMs / 1000).toFixed(1),
-                medianTokensPerPayment: medTokens,
-                medianTokensPerPaymentFormatted: formatNumber(medTokens),
-                medianPromptTokens: medPrompt,
-                medianPromptTokensFormatted: formatNumber(medPrompt),
-                medianCompletionTokens: medCompletion,
-                medianCompletionTokensFormatted: formatNumber(medCompletion),
-                medianCost: medCost,
-                medianCostFormatted: medCost.toFixed(4),
-                medianCostFormattedWithCurrency: "$" + medCost.toFixed(4),
-                medianCapacityUnits: medCU,
-                medianCapacityUnitsFormatted: medCU.toFixed(4),
+                medianDurationSec: (medianDurationMs / 1000).toFixed(1),
+                medianTokensPerRunFormatted: formatNumber(stats.medianTokensPerRun),
+
+                lastRunAt: stats.lastRunAt ? new Date(stats.lastRunAt).toLocaleString() : "—",
+                lastRunDurationMsFormatted: formatNumber(lastRunDurationMs),
+                lastRunTokensFormatted: formatNumber(stats.lastRunTokens),
+                lastRunOpenItemsFormatted: formatNumber(stats.lastRunOpenItems),
 
                 activeModel: stats.activeModel || "gemini-2.5-flash"
             });

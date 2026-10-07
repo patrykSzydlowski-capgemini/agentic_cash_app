@@ -26,9 +26,9 @@ annotate service.OpenItem with @(
             Label                     : '{i18n>fieldAiMatchStatus}',
             ![@HTML5.CssDefaults]     : {width: '13rem'}
         },
+        { $Type: 'UI.DataField', Value: aiRationale,         Label: '{i18n>fieldAiRationale}',         ![@HTML5.CssDefaults]: {width: '32rem'} },
         { $Type: 'UI.DataField', Value: matchedPaymentCount, Label: '{i18n>fieldMatchedPaymentCount}', ![@HTML5.CssDefaults]: {width: '7rem'} },
         { $Type: 'UI.DataField', Value: matchedAmount,       Label: '{i18n>fieldMatchedAmount}',       ![@HTML5.CssDefaults]: {width: '10rem'} },
-        { $Type: 'UI.DataField', Value: aiRationale,         Label: '{i18n>fieldAiRationale}',         ![@HTML5.CssDefaults]: {width: '32rem'} },
         { $Type: 'UI.DataField', Value: PostingDate,         Label: '{i18n>fieldPostingDate}',         ![@HTML5.CssDefaults]: {width: '9rem'} }
     ],
     // Closed items tab: cleared (posted) in S/4HANA.

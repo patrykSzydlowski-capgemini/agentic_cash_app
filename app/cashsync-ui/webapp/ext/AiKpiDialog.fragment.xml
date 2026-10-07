@@ -13,12 +13,39 @@
         draggable="true">
         <content>
             <VBox class="sapUiMediumMargin">
-                <!-- 2x2 Bento KPI Cards Grid: Generous ~420px width per card, zero truncation, balanced semantic rows -->
+                <!-- 2x2 KPI cards: totals over all finished pipeline runs -->
                 <cssgrid:CSSGrid
                     gridTemplateColumns="repeat(auto-fit, minmax(360px, 1fr))"
                     gridGap="1rem"
                     class="sapUiSmallMarginBottom">
-                    <!-- Card 1: Total Token Volume -->
+                    <!-- Card 1: Pipeline runs -->
+                    <f:Card>
+                        <f:content>
+                            <VBox class="sapUiMediumMargin">
+                                <HBox justifyContent="SpaceBetween" alignItems="Center">
+                                    <Title text="{i18n>kpiTotalRuns}" level="H4" titleStyle="H5" wrapping="true" />
+                                    <core:Icon
+                                        src="sap-icon://process"
+                                        size="1.5rem"
+                                        color="Neutral"
+                                        decorative="true" />
+                                </HBox>
+                                <HBox alignItems="Baseline" class="sapUiSmallMarginTopBottom">
+                                    <ObjectNumber
+                                        number="{kpi>/totalRunsFormatted}"
+                                        unit="runs"
+                                        state="None"
+                                        emphasized="true"
+                                        class="sapMObjectNumberLarge" />
+                                </HBox>
+                                <Text
+                                    text="{i18n>kpiTotalRunsSubtitle}"
+                                    class="sapUiTextSecondary"
+                                    wrapping="true" />
+                            </VBox>
+                        </f:content>
+                    </f:Card>
+                    <!-- Card 2: Total token volume -->
                     <f:Card>
                         <f:content>
                             <VBox class="sapUiMediumMargin">
@@ -45,36 +72,7 @@
                             </VBox>
                         </f:content>
                     </f:Card>
-
-                    <!-- Card 2: SAP Capacity Units -->
-                    <f:Card>
-                        <f:content>
-                            <VBox class="sapUiMediumMargin">
-                                <HBox justifyContent="SpaceBetween" alignItems="Center">
-                                    <Title text="{i18n>kpiTotalCapacityUnits}" level="H4" titleStyle="H5" wrapping="true" />
-                                    <core:Icon
-                                        src="sap-icon://performance"
-                                        size="1.5rem"
-                                        color="Positive"
-                                        decorative="true" />
-                                </HBox>
-                                <HBox alignItems="Baseline" class="sapUiSmallMarginTopBottom">
-                                    <ObjectNumber
-                                        number="{kpi>/totalCapacityUnitsFormatted}"
-                                        unit="CU"
-                                        state="Success"
-                                        emphasized="true"
-                                        class="sapMObjectNumberLarge" />
-                                </HBox>
-                                <Text
-                                    text="{i18n>kpiTotalCapacityUnitsSubtitle}"
-                                    class="sapUiTextSecondary"
-                                    wrapping="true" />
-                            </VBox>
-                        </f:content>
-                    </f:Card>
-
-                    <!-- Card 3: Estimated Model Cost -->
+                    <!-- Card 3: Estimated model cost -->
                     <f:Card>
                         <f:content>
                             <VBox class="sapUiMediumMargin">
@@ -101,13 +99,12 @@
                             </VBox>
                         </f:content>
                     </f:Card>
-
-                    <!-- Card 4: Processed Invoices -->
+                    <!-- Card 4: Files extracted -->
                     <f:Card>
                         <f:content>
                             <VBox class="sapUiMediumMargin">
                                 <HBox justifyContent="SpaceBetween" alignItems="Center">
-                                    <Title text="{i18n>kpiProcessedPayments}" level="H4" titleStyle="H5" wrapping="true" />
+                                    <Title text="{i18n>kpiFilesExtracted}" level="H4" titleStyle="H5" wrapping="true" />
                                     <core:Icon
                                         src="sap-icon://document-text"
                                         size="1.5rem"
@@ -116,14 +113,14 @@
                                 </HBox>
                                 <HBox alignItems="Baseline" class="sapUiSmallMarginTopBottom">
                                     <ObjectNumber
-                                        number="{kpi>/totalProcessedFormatted}"
-                                        unit="docs"
+                                        number="{kpi>/totalFilesExtractedFormatted}"
+                                        unit="PDF"
                                         state="None"
                                         emphasized="true"
                                         class="sapMObjectNumberLarge" />
                                 </HBox>
                                 <Text
-                                    text="{i18n>kpiProcessedSubtitle}"
+                                    text="{i18n>kpiFilesExtractedSubtitle}"
                                     class="sapUiTextSecondary"
                                     wrapping="true" />
                             </VBox>
@@ -131,7 +128,7 @@
                     </f:Card>
                 </cssgrid:CSSGrid>
 
-                <!-- Detailed Breakdown Form: Averages, Medians, Telemetry -->
+                <!-- Breakdown: per-run averages/medians, last run, totals -->
                 <form:SimpleForm
                     title="{i18n>tabAiAnalytics}"
                     editable="false"
@@ -145,44 +142,65 @@
                     columnsM="1"
                     class="sapUiSmallMarginTop">
                     <form:content>
-                        <!-- Averages Section -->
-                        <core:Title text="{i18n>kpiGroupAverages}" />
-                        <Label text="{i18n>kpiAvgTokens}" />
-                        <Text text="{kpi>/avgTokensPerPaymentFormatted} ({kpi>/avgPromptTokensFormatted} in / {kpi>/avgCompletionTokensFormatted} out)" />
-
+                        <!-- Per-run averages / medians -->
+                        <core:Title text="{i18n>kpiGroupPerRun}" />
                         <Label text="{i18n>kpiAvgDuration}" />
-                        <Text text="{kpi>/avgProcessingTimeSec} s ({kpi>/avgProcessingTimeMs} ms)" />
+                        <Text text="{kpi>/avgDurationSec} s" />
+
+                        <Label text="{i18n>kpiMedianDuration}" />
+                        <Text text="{kpi>/medianDurationSec} s" />
+
+                        <Label text="{i18n>kpiAvgTokens}" />
+                        <Text text="{kpi>/avgTokensPerRunFormatted}" />
+
+                        <Label text="{i18n>kpiMedianTokens}" />
+                        <Text text="{kpi>/medianTokensPerRunFormatted}" />
 
                         <Label text="{i18n>kpiAvgCost}" />
                         <Text text="{kpi>/avgCostFormattedWithCurrency} USD" />
 
-                        <Label text="{i18n>kpiAvgCU}" />
-                        <Text text="{kpi>/avgCapacityUnitsFormatted} CU" />
+                        <Label text="{i18n>kpiAvgTokensPerFile}" />
+                        <Text text="{kpi>/avgTokensPerFileFormatted}" />
 
-                        <!-- Medians Section -->
-                        <core:Title text="{i18n>kpiGroupMedians}" />
-                        <Label text="{i18n>kpiMedianTokens}" />
-                        <Text text="{kpi>/medianTokensPerPaymentFormatted} ({kpi>/medianPromptTokensFormatted} in / {kpi>/medianCompletionTokensFormatted} out)" />
+                        <!-- Last finished run -->
+                        <core:Title text="{i18n>kpiGroupLastRun}" />
+                        <Label text="{i18n>kpiLastRunAt}" />
+                        <Text text="{kpi>/lastRunAt}" />
 
-                        <Label text="{i18n>kpiMedianDuration}" />
-                        <Text text="{kpi>/medianProcessingTimeSec} s ({kpi>/medianProcessingTimeMs} ms)" />
+                        <Label text="{i18n>fieldRunDuration}" />
+                        <Text text="{kpi>/lastRunDurationMsFormatted} ms" />
 
-                        <Label text="{i18n>kpiMedianCost}" />
-                        <Text text="{kpi>/medianCostFormattedWithCurrency} USD" />
+                        <Label text="{i18n>fieldTotalTokens}" />
+                        <Text text="{kpi>/lastRunTokensFormatted}" />
 
-                        <Label text="{i18n>kpiMedianCU}" />
-                        <Text text="{kpi>/medianCapacityUnitsFormatted} CU" />
+                        <Label text="{i18n>fieldRunOpenItemsOpen}" />
+                        <Text text="{kpi>/lastRunOpenItemsFormatted}" />
 
-                        <!-- Global Details -->
-                        <core:Title text="{i18n>aiAnalyticsTypeNamePlural}" />
+                        <!-- Totals over all runs -->
+                        <core:Title text="{i18n>kpiGroupTotals}" />
                         <Label text="{i18n>kpiActiveModel}" />
                         <Text text="{kpi>/activeModel}" />
+
+                        <Label text="{i18n>kpiFailedRuns}" />
+                        <Text text="{kpi>/failedRunsFormatted}" />
+
+                        <Label text="{i18n>fieldRunAiCalls}" />
+                        <Text text="{kpi>/totalAiCallsFormatted}" />
 
                         <Label text="{i18n>kpiPromptTokensBreakdown}" />
                         <Text text="{kpi>/totalPromptTokensFormatted}" />
 
                         <Label text="{i18n>kpiCompletionTokensBreakdown}" />
                         <Text text="{kpi>/totalCompletionTokensFormatted}" />
+
+                        <Label text="{i18n>kpiTotalCapacityUnits}" />
+                        <Text text="{kpi>/totalCapacityUnitsFormatted} CU" />
+
+                        <Label text="{i18n>fieldRunPaymentsEvaluated}" />
+                        <Text text="{kpi>/totalPaymentsEvaluatedFormatted}" />
+
+                        <Label text="{i18n>fieldRunPaymentsMatched}" />
+                        <Text text="{kpi>/totalPaymentsMatchedFormatted}" />
                     </form:content>
                 </form:SimpleForm>
 

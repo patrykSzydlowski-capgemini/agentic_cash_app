@@ -117,6 +117,14 @@
           ]
         },
         {
+          "pattern": "PipelineRuns({key}):?query:",
+          "name": "PipelineRunsObjectPage",
+          "target": [
+            "PaymentsList",
+            "PipelineRunsObjectPage"
+          ]
+        },
+        {
           "pattern": "MatchResult:?query:",
           "name": "MatchResultList",
           "target": "MatchResultList"
@@ -204,6 +212,11 @@
                   "detail": {
                     "route": "OpenItemObjectPage"
                   }
+                },
+                "PipelineRuns": {
+                  "detail": {
+                    "route": "PipelineRunsObjectPage"
+                  }
                 }
               },
               "views": {
@@ -237,9 +250,9 @@
                   {
                     "key": "AiAnalyticsTab",
                     "label": "{i18n>tabAiAnalytics}",
-                    "entitySet": "AiAnalytics",
-                    "contextPath": "/AiAnalytics",
-                    "annotationPath": "com.sap.vocabularies.UI.v1.SelectionPresentationVariant#AiStats"
+                    "entitySet": "PipelineRuns",
+                    "contextPath": "/PipelineRuns",
+                    "annotationPath": "com.sap.vocabularies.UI.v1.SelectionPresentationVariant#PipelineRuns"
                   }
                 ]
               },
@@ -258,39 +271,9 @@
                     }
                   },
                   "actions": {
-                    "revalidatePipeline": {
-                      "press": "poc.cash.cashsyncui.ext.UploadPayment.onRevalidatePipeline",
-                      "text": "{i18n>actionRevalidatePipeline}",
-                      "requiresSelection": false
-                    },
                     "uploadPayment": {
                       "press": "poc.cash.cashsyncui.ext.UploadPayment.onUploadPayment",
                       "text": "{i18n>actionUploadPayment}",
-                      "requiresSelection": false
-                    }
-                  }
-                },
-                "/AiAnalytics/@com.sap.vocabularies.UI.v1.LineItem": {
-                  "tableSettings": {
-                    "type": "ResponsiveTable",
-                    "selectionMode": "None",
-                    "enableExport": true,
-                    "personalization": {
-                      "column": true,
-                      "sort": true,
-                      "filter": true,
-                      "group": true
-                    }
-                  },
-                  "actions": {
-                    "showKpis": {
-                      "press": "poc.cash.cashsyncui.ext.AiAnalyticsDashboard.onShowKpis",
-                      "text": "{i18n>actionShowKpis}",
-                      "requiresSelection": false
-                    },
-                    "refreshStats": {
-                      "press": "poc.cash.cashsyncui.ext.AiAnalyticsDashboard.onRefreshStats",
-                      "text": "{i18n>actionRefreshStats}",
                       "requiresSelection": false
                     }
                   }
@@ -298,7 +281,8 @@
                 "/OpenItem/@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
                     "type": "ResponsiveTable",
-                    "selectionMode": "None",
+                    "selectionMode": "Multi",
+                    "selectAll": true,
                     "enableExport": true,
                     "personalization": {
                       "column": true,
@@ -312,18 +296,14 @@
                       "press": "poc.cash.cashsyncui.ext.UploadPayment.onRevalidatePipeline",
                       "text": "{i18n>actionRevalidatePipeline}",
                       "requiresSelection": false
-                    },
-                    "uploadPayment": {
-                      "press": "poc.cash.cashsyncui.ext.UploadPayment.onUploadPayment",
-                      "text": "{i18n>actionUploadPayment}",
-                      "requiresSelection": false
                     }
                   }
                 },
                 "/OpenItem/@com.sap.vocabularies.UI.v1.LineItem#Closed": {
                   "tableSettings": {
                     "type": "ResponsiveTable",
-                    "selectionMode": "None",
+                    "selectionMode": "Multi",
+                    "selectAll": true,
                     "enableExport": true,
                     "personalization": {
                       "column": true,
@@ -346,7 +326,7 @@
                     }
                   }
                 },
-                "AiAnalytics/@com.sap.vocabularies.UI.v1.LineItem": {
+                "/PipelineRuns/@com.sap.vocabularies.UI.v1.LineItem": {
                   "tableSettings": {
                     "type": "ResponsiveTable",
                     "selectionMode": "None",
@@ -436,7 +416,7 @@
                 "proposedMatches/@com.sap.vocabularies.UI.v1.LineItem#OpenItemEvidence": {
                   "tableSettings": {
                     "type": "ResponsiveTable",
-                    "selectionMode": "None",
+                    "selectionMode": "Single",
                     "enableExport": true,
                     "personalization": {
                       "column": true,
@@ -447,6 +427,18 @@
                   }
                 }
               }
+            }
+          },
+          "controlAggregation": "midColumnPages"
+        },
+        "PipelineRunsObjectPage": {
+          "type": "Component",
+          "id": "PipelineRunsObjectPage",
+          "name": "sap.fe.templates.ObjectPage",
+          "options": {
+            "settings": {
+              "editableHeaderContent": false,
+              "contextPath": "/PipelineRuns"
             }
           },
           "controlAggregation": "midColumnPages"

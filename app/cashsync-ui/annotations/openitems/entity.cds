@@ -1,9 +1,10 @@
 using CashSyncService as service from '../../../../srv/cat-service';
 
 // Open items are synced from S/4HANA (read-only); the AI assessment columns are written by Agent 3.
+// Delete = soft delete (dismissed flag, see srv/cat-service.ts); S/4HANA itself is never changed.
 annotate service.OpenItem with @(
     Capabilities : {
-        DeleteRestrictions : { Deletable : false },
+        DeleteRestrictions : { Deletable : true },
         InsertRestrictions : { Insertable : false },
         UpdateRestrictions : { Updatable : false }
     },
@@ -28,7 +29,7 @@ annotate service.OpenItem with @(
         },
         PresentationVariant : {
             SortOrder : [
-                { Property : aiConfidence, Descending : true }
+                { Property : aiConfidencePercent, Descending : true }
             ],
             Visualizations : [
                 '@UI.LineItem'

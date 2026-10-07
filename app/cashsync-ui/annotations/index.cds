@@ -21,6 +21,7 @@ using from './match-result/actions';
 using from './analytics/entity';
 using from './analytics/fields';
 using from './analytics/list';
+using from './analytics/page';
 
 using from './openitems/entity';
 using from './openitems/fields';
