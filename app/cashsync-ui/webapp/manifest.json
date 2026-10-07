@@ -5,7 +5,12 @@
     "type": "application",
     "i18n": {
       "bundleUrl": "i18n/i18n.properties",
-      "supportedLocales": ["", "en", "de", "pl"],
+      "supportedLocales": [
+        "",
+        "en",
+        "de",
+        "pl"
+      ],
       "fallbackLocale": ""
     },
     "applicationVersion": {
@@ -36,7 +41,6 @@
     "rootView": {
       "viewName": "sap.fe.templates.RootContainer.view.Fcl",
       "type": "XML",
-      "async": true,
       "id": "appRootView"
     },
     "dependencies": {
@@ -54,12 +58,24 @@
       "compact": true,
       "cozy": true
     },
+    "resources": {
+      "css": [
+        {
+          "uri": "css/style.css"
+        }
+      ]
+    },
     "models": {
       "i18n": {
         "type": "sap.ui.model.resource.ResourceModel",
         "settings": {
           "bundleName": "poc.cash.cashsyncui.i18n.i18n",
-          "supportedLocales": ["", "en", "de", "pl"],
+          "supportedLocales": [
+            "",
+            "en",
+            "de",
+            "pl"
+          ],
           "fallbackLocale": ""
         }
       },
@@ -93,6 +109,14 @@
           ]
         },
         {
+          "pattern": "OpenItem({key}):?query:",
+          "name": "OpenItemObjectPage",
+          "target": [
+            "PaymentsList",
+            "OpenItemObjectPage"
+          ]
+        },
+        {
           "pattern": "MatchResult:?query:",
           "name": "MatchResultList",
           "target": "MatchResultList"
@@ -104,16 +128,6 @@
             "MatchResultList",
             "MatchResultObjectPage"
           ]
-        },
-        {
-          "name": "OpenItemList",
-          "pattern": "OpenItem:?query:",
-          "target": "OpenItemList"
-        },
-        {
-          "name": "IngestionLogList",
-          "pattern": "IngestionLog:?query:",
-          "target": "IngestionLogList"
         }
       ],
       "targets": {
@@ -177,21 +191,48 @@
           "options": {
             "settings": {
               "contextPath": "/Payments",
-              "variantManagement": "Control",
+              "variantManagement": "None",
+              "hideFilterBar": true,
               "initialLoad": "Enabled",
               "navigation": {
                 "Payments": {
                   "detail": {
                     "route": "PaymentsObjectPage"
                   }
+                },
+                "OpenItem": {
+                  "detail": {
+                    "route": "OpenItemObjectPage"
+                  }
                 }
               },
               "views": {
                 "paths": [
                   {
+                    "key": "OpenItemsTab",
+                    "label": "{i18n>tabOpenItems}",
+                    "entitySet": "OpenItem",
+                    "contextPath": "/OpenItem",
+                    "annotationPath": "com.sap.vocabularies.UI.v1.SelectionPresentationVariant#OpenItems"
+                  },
+                  {
                     "key": "PaymentsTab",
-                    "label": "{i18n>tabPayments}",
+                    "label": "{i18n>tabAllPayments}",
                     "annotationPath": "com.sap.vocabularies.UI.v1.SelectionPresentationVariant#AllPayments"
+                  },
+                  {
+                    "key": "MailsTab",
+                    "label": "{i18n>tabMails}",
+                    "entitySet": "IngestionLog",
+                    "contextPath": "/IngestionLog",
+                    "annotationPath": "com.sap.vocabularies.UI.v1.SelectionPresentationVariant#Mails"
+                  },
+                  {
+                    "key": "ClosedItemsTab",
+                    "label": "{i18n>tabClosedItems}",
+                    "entitySet": "OpenItem",
+                    "contextPath": "/OpenItem",
+                    "annotationPath": "com.sap.vocabularies.UI.v1.SelectionPresentationVariant#ClosedItems"
                   },
                   {
                     "key": "AiAnalyticsTab",
@@ -217,6 +258,11 @@
                     }
                   },
                   "actions": {
+                    "revalidatePipeline": {
+                      "press": "poc.cash.cashsyncui.ext.UploadPayment.onRevalidatePipeline",
+                      "text": "{i18n>actionRevalidatePipeline}",
+                      "requiresSelection": false
+                    },
                     "uploadPayment": {
                       "press": "poc.cash.cashsyncui.ext.UploadPayment.onUploadPayment",
                       "text": "{i18n>actionUploadPayment}",
@@ -246,6 +292,57 @@
                       "press": "poc.cash.cashsyncui.ext.AiAnalyticsDashboard.onRefreshStats",
                       "text": "{i18n>actionRefreshStats}",
                       "requiresSelection": false
+                    }
+                  }
+                },
+                "/OpenItem/@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable",
+                    "selectionMode": "None",
+                    "enableExport": true,
+                    "personalization": {
+                      "column": true,
+                      "sort": true,
+                      "filter": true,
+                      "group": true
+                    }
+                  },
+                  "actions": {
+                    "revalidatePipeline": {
+                      "press": "poc.cash.cashsyncui.ext.UploadPayment.onRevalidatePipeline",
+                      "text": "{i18n>actionRevalidatePipeline}",
+                      "requiresSelection": false
+                    },
+                    "uploadPayment": {
+                      "press": "poc.cash.cashsyncui.ext.UploadPayment.onUploadPayment",
+                      "text": "{i18n>actionUploadPayment}",
+                      "requiresSelection": false
+                    }
+                  }
+                },
+                "/OpenItem/@com.sap.vocabularies.UI.v1.LineItem#Closed": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable",
+                    "selectionMode": "None",
+                    "enableExport": true,
+                    "personalization": {
+                      "column": true,
+                      "sort": true,
+                      "filter": true,
+                      "group": true
+                    }
+                  }
+                },
+                "/IngestionLog/@com.sap.vocabularies.UI.v1.LineItem": {
+                  "tableSettings": {
+                    "type": "ResponsiveTable",
+                    "selectionMode": "None",
+                    "enableExport": true,
+                    "personalization": {
+                      "column": true,
+                      "sort": true,
+                      "filter": true,
+                      "group": true
                     }
                   }
                 },
@@ -297,6 +394,14 @@
                         "placement": "After",
                         "anchor": "AiAnalyticsFacet"
                       }
+                    },
+                    "sectionPdfViewer": {
+                      "template": "poc.cash.cashsyncui.fragments.PdfDocumentViewer",
+                      "title": "{i18n>facetRemittancePdf}",
+                      "position": {
+                        "placement": "After",
+                        "anchor": "sectionAiContext"
+                      }
                     }
                   }
                 },
@@ -319,17 +424,16 @@
           },
           "controlAggregation": "midColumnPages"
         },
-        "OpenItemList": {
+        "OpenItemObjectPage": {
           "type": "Component",
-          "id": "OpenItemList",
-          "name": "sap.fe.templates.ListReport",
-          "controlAggregation": "beginColumnPages",
+          "id": "OpenItemObjectPage",
+          "name": "sap.fe.templates.ObjectPage",
           "options": {
             "settings": {
-              "navigation": {},
+              "editableHeaderContent": false,
               "contextPath": "/OpenItem",
               "controlConfiguration": {
-                "@com.sap.vocabularies.UI.v1.LineItem": {
+                "proposedMatches/@com.sap.vocabularies.UI.v1.LineItem#OpenItemEvidence": {
                   "tableSettings": {
                     "type": "ResponsiveTable",
                     "selectionMode": "None",
@@ -344,34 +448,8 @@
                 }
               }
             }
-          }
-        },
-        "IngestionLogList": {
-          "type": "Component",
-          "id": "IngestionLogList",
-          "name": "sap.fe.templates.ListReport",
-          "controlAggregation": "beginColumnPages",
-          "options": {
-            "settings": {
-              "navigation": {},
-              "contextPath": "/IngestionLog",
-              "controlConfiguration": {
-                "@com.sap.vocabularies.UI.v1.LineItem": {
-                  "tableSettings": {
-                    "type": "ResponsiveTable",
-                    "selectionMode": "None",
-                    "enableExport": true,
-                    "personalization": {
-                      "column": true,
-                      "sort": true,
-                      "filter": true,
-                      "group": true
-                    }
-                  }
-                }
-              }
-            }
-          }
+          },
+          "controlAggregation": "midColumnPages"
         }
       }
     },

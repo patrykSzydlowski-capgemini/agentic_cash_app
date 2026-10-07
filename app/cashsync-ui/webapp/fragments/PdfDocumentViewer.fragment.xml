@@ -1,0 +1,69 @@
+<core:FragmentDefinition
+    xmlns="sap.m"
+    xmlns:core="sap.ui.core"
+    core:require="{ UploadPayment: 'poc/cash/cashsyncui/ext/UploadPayment' }">
+
+    <VBox id="pdfViewerContainer" class="sapUiSmallMargin">
+        <!-- Document Information & Actions Bar -->
+        <HBox
+            justifyContent="SpaceBetween"
+            alignItems="Center"
+            wrap="Wrap"
+            class="sapUiSmallMarginBottom">
+            <HBox alignItems="Center">
+                <core:Icon
+                    src="sap-icon://pdf-attachment"
+                    size="1.5rem"
+                    color="Negative"
+                    class="sapUiSmallMarginEnd" />
+                <VBox>
+                    <Title
+                        text="{= ${fileName} ? ${fileName} : 'Remittance_Advice.pdf' }"
+                        level="H5"
+                        titleStyle="H6" />
+                    <Text
+                        text="{= 'Płatnik: ' + ${payer} + '  |  Kwota: ' + ${amount} + ' ' + ${currency} + '  |  Data: ' + ${valueDate} }"
+                        class="sapUiTextSecondary" />
+                </VBox>
+            </HBox>
+            <HBox alignItems="Center" class="sapUiTinyMarginTop">
+                <Button
+                    id="btnOpenPdfNewTab"
+                    text="{i18n>btnOpenPdfNewTab}"
+                    icon="sap-icon://inspect"
+                    press="UploadPayment.onOpenPdfInNewTab"
+                    class="sapUiTinyMarginEnd" />
+                <Button
+                    id="btnDownloadPdf"
+                    text="{i18n>btnDownloadPdf}"
+                    icon="sap-icon://download"
+                    press="UploadPayment.onDownloadPdf" />
+            </HBox>
+        </HBox>
+
+        <!-- Embedded Interactive PDF Viewer -->
+        <PDFViewer
+            id="remittancePdfViewer"
+            source="{= '/odata/v4/cash-sync/Payments(' + ${ID} + ')/attachmentContent' }"
+            title="{= ${fileName} ? ${fileName} : 'Remittance Advice' }"
+            height="700px"
+            width="100%"
+            isTrustedSource="true"
+            displayType="Embedded"
+            showDownloadButton="false">
+            <errorPlaceholder>
+                <IllustratedMessage
+                    illustrationType="sapIllus-NoDocuments"
+                    title="{i18n>noPdfAvailableTitle}"
+                    description="{i18n>noPdfAvailableDesc}">
+                    <additionalContent>
+                        <Button
+                            text="{i18n>btnOpenPdfNewTab}"
+                            icon="sap-icon://inspect"
+                            press="UploadPayment.onOpenPdfInNewTab" />
+                    </additionalContent>
+                </IllustratedMessage>
+            </errorPlaceholder>
+        </PDFViewer>
+    </VBox>
+</core:FragmentDefinition>

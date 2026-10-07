@@ -29,20 +29,27 @@ annotate service.Payments with @(
             Action : 'CashSyncService.reprocessWithAI',
             Label  : '{i18n>actionReprocessWithAI}'
         },
-        {
-            $Type  : 'UI.DataFieldForAction',
-            Action : 'CashSyncService.EntityContainer/syncMailbox',
-            Label  : '{i18n>actionSyncMailbox}'
-        },
         { $Type: 'UI.DataField', Value: payer,                Label: '{i18n>fieldPayer}',                ![@HTML5.CssDefaults]: {width: '16rem'} },
-        { $Type: 'UI.DataField', Value: amount,               Label: '{i18n>fieldAmount}',               ![@HTML5.CssDefaults]: {width: '9rem'} },
-        { $Type: 'UI.DataField', Value: currency,             Label: '{i18n>fieldCurrency}',             ![@HTML5.CssDefaults]: {width: '6rem'} },
+        { $Type: 'UI.DataField', Value: amount,               Label: '{i18n>fieldAmount}',               ![@HTML5.CssDefaults]: {width: '10rem'} },
         { $Type: 'UI.DataField', Value: valueDate,            Label: '{i18n>fieldValueDate}',            ![@HTML5.CssDefaults]: {width: '9rem'} },
+        {
+            $Type                     : 'UI.DataFieldForAnnotation',
+            Target                    : '@UI.DataPoint#ExtractionConfidence',
+            Label                     : '{i18n>fieldExtractionConfidence}',
+            CriticalityRepresentation : #WithoutIcon,
+            ![@HTML5.CssDefaults]     : {width: '11rem'}
+        },
+        {
+            $Type                     : 'UI.DataField',
+            Value                     : status,
+            Criticality               : StatusCriticality,
+            CriticalityRepresentation : #WithIcon,
+            Label                     : '{i18n>fieldStatus}',
+            ![@HTML5.CssDefaults]     : {width: '11rem'}
+        },
         { $Type: 'UI.DataField', Value: aiModel,              Label: '{i18n>fieldAiModel}',              ![@HTML5.CssDefaults]: {width: '12rem'} },
         { $Type: 'UI.DataField', Value: totalTokens,          Label: '{i18n>fieldTotalTokens}',          ![@HTML5.CssDefaults]: {width: '8rem'} },
-        { $Type: 'UI.DataField', Value: estimatedCost,        Label: '{i18n>fieldEstimatedCost}',        ![@HTML5.CssDefaults]: {width: '9rem'} },
-        { $Type: 'UI.DataField', Value: extractionConfidence, Label: '{i18n>fieldExtractionConfidence}', ![@HTML5.CssDefaults]: {width: '9rem'} },
-        { $Type: 'UI.DataField', Value: status,               Criticality: StatusCriticality, Label: '{i18n>fieldStatus}', ![@HTML5.CssDefaults]: {width: '10rem'} },
+        { $Type: 'UI.DataField', Value: processingTimeMs,     Label: '{i18n>fieldProcessingTime}',       ![@HTML5.CssDefaults]: {width: '9rem'} },
         { $Type: 'UI.DataField', Value: rationale,            Label: '{i18n>fieldRationale}',            ![@HTML5.CssDefaults]: {width: '24rem'} }
     ]
 );

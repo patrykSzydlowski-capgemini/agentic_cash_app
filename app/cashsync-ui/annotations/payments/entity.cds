@@ -11,7 +11,7 @@ annotate service.Payments with @(
         Description    : { $Type: 'UI.DataField', Value: status }
     },
     UI.SelectionPresentationVariant #AllPayments : {
-        Text : '{i18n>tabPayments}',
+        Text : '{i18n>tabAllPayments}',
         SelectionVariant : {
             SelectOptions : []
         },
@@ -22,3 +22,4 @@ annotate service.Payments with @(
         }
     }
 );
+

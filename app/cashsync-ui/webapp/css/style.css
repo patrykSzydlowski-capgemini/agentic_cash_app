@@ -1,0 +1,114 @@
+/* Autonomous Cash Application Custom UI Styling */
+
+/* Progress Indicator / Metrics styling */
+.sapMListTblCell .sapMPI,
+[role="gridcell"] .sapMPI,
+[role="cell"] .sapMPI {
+    margin-top: 0.25rem;
+    margin-bottom: 0.25rem;
+}
+
+/* Suppress redundant status icon/text specifically in cells containing ProgressIndicator */
+.sapMListTblCell:has(.sapMPI) .sapMObjStatus,
+.sapMListTblCell:has(.sapMPI) .sapUiIcon,
+[role="gridcell"]:has(.sapMPI) .sapMObjStatus,
+[role="gridcell"]:has(.sapMPI) .sapUiIcon,
+[role="cell"]:has(.sapMPI) .sapMObjStatus,
+[role="cell"]:has(.sapMPI) .sapUiIcon,
+.sapMVBox:has(.sapMPI) > .sapMObjStatus,
+.sapMFlexBox:has(.sapMPI) > .sapMObjStatus,
+.sapMPI ~ .sapMObjStatus,
+.sapMPI ~ .sapUiIcon {
+    display: none !important;
+}
+
+/* ValueState.Information (Criticality 5) vibrant blue styling for posted items */
+.sapMObjStatus.sapMObjStatusInformation,
+.sapMObjStatus.sapMObjStatusInformation .sapMObjStatusText,
+.sapMObjStatus.sapMObjStatusInformation .sapMObjStatusIcon,
+[data-sap-ui-status="Information"] .sapMObjStatusText,
+[data-sap-ui-status="Information"] .sapMObjStatusIcon {
+    color: var(--sapInformationColor, #0a6ed1) !important;
+}
+
+.sapMPIBar.sapMPIBarInformation,
+.sapMPIBarInformation,
+.sapMPI .sapMPIBarInformation,
+.sapMPI.sapMPIStateInformation .sapMPIBar,
+.sapMPI.sapMPIInformation .sapMPIBar,
+.sapMPI[data-sap-ui-state="Information"] .sapMPIBar,
+.sapMPI.sapMPITypeInformation .sapMPIBar,
+.sapMPIValueInformation {
+    background: var(--sapInformationColor, #0a6ed1) !important;
+    background-color: var(--sapInformationColor, #0a6ed1) !important;
+    border-color: var(--sapInformationColor, #0a6ed1) !important;
+}
+
+.sapMPIBar.sapMPIBarInformation + .sapMPIBarRemaining,
+.sapMPIBarInformation + .sapMPIBarRemaining {
+    border-color: var(--sapInformationColor, #0a6ed1) !important;
+}
+
+/* ==========================================================================
+   Modern Upload Dialog & Drop Zone (Fiori Horizon Enterprise)
+   ========================================================================== */
+
+.uploadDialogContainer {
+    padding: 0.25rem 0.25rem;
+}
+
+.uploadDropZoneBox {
+    border: 2px dashed var(--sapField_BorderColor, #8995a1);
+    border-radius: 0.75rem;
+    padding: 2rem 1.5rem;
+    background: var(--sapGroup_ContentBackground, #ffffff);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    text-align: center;
+    position: relative;
+}
+
+.uploadDropZoneBox:hover,
+.uploadDropZoneBox.uploadDropZoneActive {
+    border-color: var(--sapBrandColor, #0070f2) !important;
+    background: var(--sapList_Hover_Background, rgba(0, 112, 242, 0.05)) !important;
+    box-shadow: 0 4px 16px rgba(0, 112, 242, 0.12);
+}
+
+.uploadDropZoneIcon {
+    color: var(--sapBrandColor, #0070f2) !important;
+    filter: drop-shadow(0 2px 6px rgba(0, 112, 242, 0.25));
+}
+
+.uploadFilesCard {
+    border: 1px solid var(--sapList_BorderColor, #d9d9d9);
+    border-radius: 0.5rem;
+    background: var(--sapTile_Background, #ffffff);
+    overflow: hidden;
+}
+
+.uploadFilesList {
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.uploadFileItem {
+    border-bottom: 1px solid var(--sapList_BorderColor, #f0f0f0);
+    transition: background 0.15s ease;
+}
+
+.uploadFileItem:last-child {
+    border-bottom: none;
+}
+
+.uploadFileItem:hover {
+    background: var(--sapList_Hover_Background, rgba(0, 0, 0, 0.03));
+}
+
+.uploadProgressBox {
+    background: var(--sapList_Hover_Background, rgba(0, 112, 242, 0.05));
+    border: 1px solid var(--sapField_BorderColor, #8995a1);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+}
+
+

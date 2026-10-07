@@ -25,6 +25,28 @@ annotate service.Payments with @(
             { $Type: 'UI.DataField', Value: extractionConfidence, Label: '{i18n>fieldExtractionConfidence}' }
         ]
     },
+    UI.HeaderFacets : [
+        {
+            $Type  : 'UI.ReferenceFacet',
+            ID     : 'HeaderAmountFacet',
+            Target : '@UI.DataPoint#PaymentAmount'
+        },
+        {
+            $Type  : 'UI.ReferenceFacet',
+            ID     : 'HeaderConfidenceFacet',
+            Target : '@UI.DataPoint#ExtractionConfidence'
+        },
+        {
+            $Type  : 'UI.ReferenceFacet',
+            ID     : 'HeaderProcessingTimeFacet',
+            Target : '@UI.DataPoint#ProcessingTime'
+        },
+        {
+            $Type  : 'UI.ReferenceFacet',
+            ID     : 'HeaderTokensFacet',
+            Target : '@UI.DataPoint#TotalTokens'
+        }
+    ],
     UI.Facets : [
         {
             $Type  : 'UI.ReferenceFacet',
@@ -59,6 +81,8 @@ annotate service.Payments actions {
             TargetProperties : [
                 'status',
                 'StatusCriticality',
+                'statusText',
+                'ConfidenceCriticality',
                 'extractionConfidence',
                 'rationale',
                 'promptTokens',
@@ -77,7 +101,10 @@ annotate service.Payments actions {
         Common.SideEffects : {
             TargetProperties : [
                 'status',
-                'StatusCriticality'
+                'StatusCriticality',
+                'statusText',
+                'ConfidenceCriticality',
+                'extractionConfidence'
             ],
             TargetEntities : [
                 'matches'

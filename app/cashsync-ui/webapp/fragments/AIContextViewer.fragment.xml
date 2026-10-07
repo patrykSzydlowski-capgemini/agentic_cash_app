@@ -2,33 +2,123 @@
     xmlns="sap.m"
     xmlns:core="sap.ui.core"
     xmlns:ce="sap.ui.codeeditor"
-    height="100%"
-    displayBlock="true">
+    xmlns:cssgrid="sap.ui.layout.cssgrid"
+    xmlns:f="sap.f">
 
     <VBox id="aiContextViewerBox" class="sapUiSmallMargin">
-        <Panel id="panelAiRationale"
-               headerText="{i18n>fieldRationale}"
-               expandable="true"
-               expanded="true"
-               visible="{= !!${rationale} }">
-            <ce:CodeEditor id="editorAiRationale"
-                           type="text"
-                           value="{rationale}"
-                           maxLines="15"
-                           editable="false"
-                           syntaxHints="false" />
-        </Panel>
+        <!-- 1. Executive AI Reasoning Summary -->
+        <MessageStrip
+            id="stripAiRationale"
+            text="{rationale}"
+            type="{= ${status} === 'posted' || ${status} === 'cleared' ? 'Information' : (${status} === 'matched' ? 'Success' : (${status} === 'needsReview' ? 'Warning' : 'Information')) }"
+            showIcon="true"
+            class="sapUiSmallMarginBottom"
+            visible="{= !!${rationale} }" />
 
-        <Panel id="panelRawPaymentPayload"
-               headerText="{i18n>facetPaymentDetails}"
-               expandable="true"
-               expanded="false">
-            <ce:CodeEditor id="editorPaymentSummary"
-                           type="json"
-                           value="{= '{\n  &quot;paymentId&quot;: &quot;' + ${ID} + '&quot;,\n  &quot;payer&quot;: &quot;' + ${payer} + '&quot;,\n  &quot;amount&quot;: ' + ${amount} + ',\n  &quot;currency&quot;: &quot;' + ${currency} + '&quot;,\n  &quot;valueDate&quot;: &quot;' + ${valueDate} + '&quot;,\n  &quot;status&quot;: &quot;' + ${status} + '&quot;,\n  &quot;aiModel&quot;: &quot;' + ${aiModel} + '&quot;,\n  &quot;extractionConfidence&quot;: ' + ${extractionConfidence} + '\n}' }"
-                           maxLines="15"
-                           editable="false"
-                           syntaxHints="false" />
+        <!-- 2. Multi-Agent Pipeline Execution Grid (Agent 1 -> Agent 2 -> Agent 3) -->
+        <cssgrid:CSSGrid
+            gridTemplateColumns="repeat(auto-fit, minmax(280px, 1fr))"
+            gridGap="1rem"
+            class="sapUiSmallMarginBottom">
+
+            <!-- Agent 1: Mailbox & Document Intake -->
+            <f:Card>
+                <f:content>
+                    <VBox class="sapUiSmallMargin">
+                        <HBox justifyContent="SpaceBetween" alignItems="Center">
+                            <Title text="{i18n>agent1Title}" level="H5" titleStyle="H6" />
+                            <core:Icon
+                                src="sap-icon://email"
+                                size="1.25rem"
+                                color="Marker"
+                                decorative="true" />
+                        </HBox>
+                        <Text
+                            text="{i18n>agent1Desc}"
+                            class="sapUiTextSecondary sapUiTinyMarginTopBottom"
+                            wrapping="true" />
+                        <HBox alignItems="Center" class="sapUiTinyMarginTop">
+                            <ObjectStatus
+                                text="{i18n>decisionRelevant}"
+                                state="Success"
+                                icon="sap-icon://sys-enter-2" />
+                        </HBox>
+                    </VBox>
+                </f:content>
+            </f:Card>
+
+            <!-- Agent 2: Gemini Multimodal Extraction -->
+            <f:Card>
+                <f:content>
+                    <VBox class="sapUiSmallMargin">
+                        <HBox justifyContent="SpaceBetween" alignItems="Center">
+                            <Title text="{i18n>agent2Title}" level="H5" titleStyle="H6" />
+                            <core:Icon
+                                src="sap-icon://ai"
+                                size="1.25rem"
+                                color="Positive"
+                                decorative="true" />
+                        </HBox>
+                        <Text
+                            text="{i18n>agent2Desc}"
+                            class="sapUiTextSecondary sapUiTinyMarginTopBottom"
+                            wrapping="true" />
+                        <HBox alignItems="Center" class="sapUiTinyMarginTop">
+                            <ObjectStatus
+                                text="{aiModel}"
+                                state="Information"
+                                icon="sap-icon://process"
+                                class="sapUiTinyMarginEnd" />
+                            <ObjectNumber
+                                number="{totalTokens}"
+                                unit="tokens"
+                                state="None" />
+                        </HBox>
+                    </VBox>
+                </f:content>
+            </f:Card>
+
+            <!-- Agent 3: S/4HANA Reconciliation & Clearing -->
+            <f:Card>
+                <f:content>
+                    <VBox class="sapUiSmallMargin">
+                        <HBox justifyContent="SpaceBetween" alignItems="Center">
+                            <Title text="{i18n>agent3Title}" level="H5" titleStyle="H6" />
+                            <core:Icon
+                                src="sap-icon://sales-order-item"
+                                size="1.25rem"
+                                color="Neutral"
+                                decorative="true" />
+                        </HBox>
+                        <Text
+                            text="{i18n>agent3Desc}"
+                            class="sapUiTextSecondary sapUiTinyMarginTopBottom"
+                            wrapping="true" />
+                        <HBox alignItems="Center" class="sapUiTinyMarginTop">
+                            <ObjectStatus
+                                text="{= ${statusText} || ${status} }"
+                                state="{= ${status} === 'posted' || ${status} === 'cleared' ? 'Information' : (${status} === 'matched' ? 'Success' : (${status} === 'needsReview' ? 'Warning' : 'Error')) }"
+                                icon="{= ${status} === 'posted' || ${status} === 'cleared' ? 'sap-icon://sys-enter-2' : (${status} === 'matched' ? 'sap-icon://accept' : 'sap-icon://alert') }" />
+                        </HBox>
+                    </VBox>
+                </f:content>
+            </f:Card>
+        </cssgrid:CSSGrid>
+
+        <!-- 3. Technical Audit Trail & Raw Payload (Collapsible) -->
+        <Panel
+            id="panelRawPaymentPayload"
+            headerText="{i18n>labelRawPayloadAudit}"
+            expandable="true"
+            expanded="false"
+            class="sapUiSmallMarginTop">
+            <ce:CodeEditor
+                id="editorPaymentSummary"
+                type="json"
+                value="{= '{\n  &quot;paymentId&quot;: &quot;' + ${ID} + '&quot;,\n  &quot;payer&quot;: &quot;' + ${payer} + '&quot;,\n  &quot;amount&quot;: ' + ${amount} + ',\n  &quot;currency&quot;: &quot;' + ${currency} + '&quot;,\n  &quot;valueDate&quot;: &quot;' + ${valueDate} + '&quot;,\n  &quot;status&quot;: &quot;' + ${status} + '&quot;,\n  &quot;aiModel&quot;: &quot;' + ${aiModel} + '&quot;,\n  &quot;extractionConfidence&quot;: ' + ${extractionConfidence} + ',\n  &quot;totalTokens&quot;: ' + ${totalTokens} + ',\n  &quot;processingTimeMs&quot;: ' + ${processingTimeMs} + '\n}' }"
+                maxLines="15"
+                editable="false"
+                syntaxHints="false" />
         </Panel>
     </VBox>
 </core:FragmentDefinition>

@@ -22,8 +22,10 @@ using from './analytics/entity';
 using from './analytics/fields';
 using from './analytics/list';
 
+using from './openitems/entity';
 using from './openitems/fields';
 using from './openitems/list';
+using from './openitems/page';
 
 using from './ingestion/entity';
 using from './ingestion/fields';

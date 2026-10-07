@@ -1,0 +1,157 @@
+<core:FragmentDefinition
+    xmlns="sap.m"
+    xmlns:core="sap.ui.core"
+    xmlns:u="sap.ui.unified">
+    <Dialog
+        id="uploadPaymentDialog"
+        title="{i18n>uploadDialogTitle}"
+        icon="sap-icon://upload-to-cloud"
+        contentWidth="580px"
+        resizable="false"
+        draggable="true"
+        class="sapUiResponsiveContentPadding">
+        <content>
+            <VBox class="uploadDialogContainer">
+                <!-- Informative AI Pipeline Message Strip -->
+                <MessageStrip
+                    text="{i18n>uploadAiPipelineInfo}"
+                    type="Information"
+                    showIcon="true"
+                    class="sapUiSmallMarginBottom" />
+
+                <!-- Modern Fiori Drop Zone Box -->
+                <VBox
+                    id="uploadDropZoneBox"
+                    class="uploadDropZoneBox sapUiSmallMarginBottom"
+                    alignItems="Center"
+                    justifyContent="Center">
+                    <core:Icon
+                        src="sap-icon://upload-to-cloud"
+                        size="3.2rem"
+                        class="uploadDropZoneIcon sapUiSmallMarginBottom"
+                        decorative="true" />
+                    <Title
+                        text="{i18n>uploadDialogDropTitle}"
+                        level="H4"
+                        titleStyle="H5"
+                        class="sapUiTinyMarginBottom" />
+                    <Text
+                        text="{i18n>uploadDialogDropSubtext}"
+                        class="sapUiTextSecondary sapUiTinyMarginBottom" />
+                    <Text
+                        text="{i18n>uploadDialogDropLimits}"
+                        class="sapUiTextMuted sapUiSmallMarginBottom sapUiFontSizeSmall" />
+                    
+                    <!-- Clean Button-Only FileUploader without ugly native input -->
+                    <u:FileUploader
+                        id="paymentFileUploader"
+                        name="remittance"
+                        fileType="pdf"
+                        mimeType="application/pdf"
+                        multiple="true"
+                        buttonOnly="true"
+                        buttonText="{i18n>uploadBtnBrowse}"
+                        icon="sap-icon://attachment"
+                        type="Emphasized"
+                        change=".onFileChange" />
+                </VBox>
+
+                <!-- Selected Files List Section -->
+                <VBox
+                    visible="{upload>/hasFiles}"
+                    class="uploadFilesCard sapUiSmallMarginBottom">
+                    <Toolbar
+                        height="2.75rem"
+                        design="Transparent"
+                        class="sapUiNoContentPadding sapUiSmallMarginBeginEnd">
+                        <core:Icon
+                            src="sap-icon://documents"
+                            size="1.1rem"
+                            class="sapUiTinyMarginEnd"
+                            decorative="true" />
+                        <Title
+                            text="{parts: [{path: 'i18n>uploadSelectedFilesTitle'}, {path: 'upload>/count'}], formatter: '.formatSelectedTitle'}"
+                            level="H5"
+                            titleStyle="H6" />
+                        <ToolbarSpacer />
+                        <Button
+                            text="{i18n>uploadBtnClear}"
+                            icon="sap-icon://delete"
+                            type="Transparent"
+                            press=".onClearFiles"
+                            enabled="{= !${upload>/isUploading} }" />
+                    </Toolbar>
+
+                    <List
+                        items="{upload>/files}"
+                        noDataText="{i18n>uploadNoFilesSelected}"
+                        class="uploadFilesList">
+                        <CustomListItem class="uploadFileItem">
+                            <HBox
+                                alignItems="Center"
+                                justifyContent="SpaceBetween"
+                                class="sapUiSmallMargin">
+                                <HBox alignItems="Center">
+                                    <core:Icon
+                                        src="sap-icon://pdf-attachment"
+                                        size="1.8rem"
+                                        color="Negative"
+                                        class="sapUiSmallMarginEnd"
+                                        decorative="true" />
+                                    <VBox>
+                                        <Text text="{upload>name}" class="sapMTextBold" wrapping="true" />
+                                        <Text text="{upload>sizeFormatted}" class="sapUiTextSecondary sapUiFontSizeSmall" />
+                                    </VBox>
+                                </HBox>
+                                <HBox alignItems="Center">
+                                    <ObjectStatus
+                                        text="{i18n>uploadFileReadyStatus}"
+                                        state="Information"
+                                        class="sapUiSmallMarginEnd" />
+                                    <Button
+                                        icon="sap-icon://decline"
+                                        type="Transparent"
+                                        tooltip="{i18n>uploadRemoveFileTooltip}"
+                                        press=".onRemoveFile"
+                                        enabled="{= !${upload>/isUploading} }" />
+                                </HBox>
+                            </HBox>
+                        </CustomListItem>
+                    </List>
+                </VBox>
+
+                <!-- In-Dialog Real-Time Progress Bar -->
+                <VBox
+                    visible="{upload>/isUploading}"
+                    class="uploadProgressBox sapUiSmallMarginTop">
+                    <HBox justifyContent="SpaceBetween" alignItems="Center" class="sapUiTinyMarginBottom">
+                        <HBox alignItems="Center">
+                            <BusyIndicator size="1rem" class="sapUiTinyMarginEnd" />
+                            <Text text="{upload>/progressText}" class="sapMTextBold" />
+                        </HBox>
+                        <Text text="{upload>/progressPercent}%" class="sapUiTextSecondary sapUiFontSizeSmall" />
+                    </HBox>
+                    <ProgressIndicator
+                        percentValue="{upload>/progressPercent}"
+                        displayValue="{upload>/progressPercent}%"
+                        state="Information" />
+                </VBox>
+            </VBox>
+        </content>
+        <beginButton>
+            <Button
+                id="btnStartUpload"
+                text="{parts: [{path: 'i18n>uploadBtnStartAi'}, {path: 'upload>/count'}], formatter: '.formatStartButton'}"
+                type="Emphasized"
+                icon="sap-icon://ai"
+                enabled="{= ${upload>/hasFiles} &amp;&amp; !${upload>/isUploading} }"
+                press=".onConfirmUpload" />
+        </beginButton>
+        <endButton>
+            <Button
+                text="{i18n>uploadBtnCancel}"
+                enabled="{= !${upload>/isUploading} }"
+                press=".onCancelDialog" />
+        </endButton>
+    </Dialog>
+</core:FragmentDefinition>

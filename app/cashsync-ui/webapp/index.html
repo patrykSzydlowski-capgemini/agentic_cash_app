@@ -4,12 +4,189 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <title>Agentic Cash App</title>
+    <title>Autonomous Cash Application — SAP S/4HANA &amp; GenAI</title>
     <style>
-        html, body, body > div, #container, #container-uiarea {
+        html, body {
             height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: "72", "72full", Arial, Helvetica, sans-serif;
+        }
+        .shell-header {
+            height: 44px;
+            background: #ffffff;
+            border-bottom: 1px solid #d9d9d9;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 1rem;
+            box-sizing: border-box;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            transition: background 0.3s, border-color 0.3s, color 0.3s;
+        }
+        body.dark-mode .shell-header {
+            background: #1d232a;
+            border-bottom: 1px solid #2e3845;
+            color: #f5f6f7;
+        }
+        .shell-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .shell-logo {
+            display: flex;
+            align-items: center;
+        }
+        .shell-title-group {
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+        }
+        .shell-title {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #1d2d3e;
+        }
+        body.dark-mode .shell-title {
+            color: #f5f6f7;
+        }
+        .shell-subtitle {
+            font-size: 0.8rem;
+            color: #556b82;
+        }
+        body.dark-mode .shell-subtitle {
+            color: #8da4be;
+        }
+        .shell-right {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .status-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.2rem 0.55rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .status-chip.success {
+            background: #e8f5e9;
+            color: #1b5e20;
+            border: 1px solid #c8e6c9;
+        }
+        body.dark-mode .status-chip.success {
+            background: rgba(46, 125, 50, 0.2);
+            color: #81c784;
+            border: 1px solid rgba(129, 199, 132, 0.3);
+        }
+        .status-chip.info {
+            background: #e3f2fd;
+            color: #0d47a1;
+            border: 1px solid #bbdefb;
+        }
+        body.dark-mode .status-chip.info {
+            background: rgba(13, 71, 161, 0.2);
+            color: #64b5f6;
+            border: 1px solid rgba(100, 181, 246, 0.3);
+        }
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+        .theme-btn {
+            background: transparent;
+            border: 1px solid #c5c5c5;
+            border-radius: 6px;
+            padding: 0.25rem 0.6rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            color: inherit;
+            transition: all 0.2s;
+        }
+        .theme-btn:hover {
+            background: rgba(0, 0, 0, 0.05);
+        }
+        body.dark-mode .theme-btn {
+            border-color: #435164;
+        }
+        body.dark-mode .theme-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        #app-area {
+            position: absolute;
+            top: 44px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: calc(100% - 44px);
+            width: 100%;
+            overflow: hidden;
+        }
+        #app-area > div,
+        #container,
+        #container-uiarea,
+        .sapUiComponentContainer,
+        .sapUiUIArea {
+            height: 100% !important;
+            width: 100% !important;
+        }
+        .sapMListTblCell .sapMPI,
+        [role="gridcell"] .sapMPI,
+        [role="cell"] .sapMPI {
+            margin-top: 0.25rem;
+            margin-bottom: 0.25rem;
+        }
+        /* Suppress redundant status icon/text specifically in cells containing ProgressIndicator */
+        .sapMListTblCell:has(.sapMPI) .sapMObjStatus,
+        .sapMListTblCell:has(.sapMPI) .sapUiIcon,
+        [role="gridcell"]:has(.sapMPI) .sapMObjStatus,
+        [role="gridcell"]:has(.sapMPI) .sapUiIcon,
+        [role="cell"]:has(.sapMPI) .sapMObjStatus,
+        [role="cell"]:has(.sapMPI) .sapUiIcon,
+        .sapMVBox:has(.sapMPI) > .sapMObjStatus,
+        .sapMFlexBox:has(.sapMPI) > .sapMObjStatus,
+        .sapMPI ~ .sapMObjStatus,
+        .sapMPI ~ .sapUiIcon {
+            display: none !important;
+        }
+        .sapMObjStatus.sapMObjStatusInformation,
+        .sapMObjStatus.sapMObjStatusInformation .sapMObjStatusText,
+        .sapMObjStatus.sapMObjStatusInformation .sapMObjStatusIcon,
+        [data-sap-ui-status="Information"] .sapMObjStatusText,
+        [data-sap-ui-status="Information"] .sapMObjStatusIcon {
+            color: var(--sapInformationColor, #0a6ed1) !important;
+        }
+        .sapMPIBar.sapMPIBarInformation,
+        .sapMPIBarInformation,
+        .sapMPI .sapMPIBarInformation,
+        .sapMPI.sapMPIStateInformation .sapMPIBar,
+        .sapMPI.sapMPIInformation .sapMPIBar,
+        .sapMPI[data-sap-ui-state="Information"] .sapMPIBar,
+        .sapMPI.sapMPITypeInformation .sapMPIBar,
+        .sapMPIValueInformation {
+            background: var(--sapInformationColor, #0a6ed1) !important;
+            background-color: var(--sapInformationColor, #0a6ed1) !important;
+            border-color: var(--sapInformationColor, #0a6ed1) !important;
+        }
+        .sapMPIBar.sapMPIBarInformation + .sapMPIBarRemaining,
+        .sapMPIBarInformation + .sapMPIBarRemaining {
+            border-color: var(--sapInformationColor, #0a6ed1) !important;
         }
     </style>
+    <link rel="stylesheet" type="text/css" href="css/style.css">
     <script
         id="sap-ui-bootstrap"
         src="https://sapui5.hana.ondemand.com/1.152.0/resources/sap-ui-core.js"
@@ -24,13 +201,58 @@
         data-sap-ui-xx-componentPreload="off"
     ></script>
 </head>
-<body class="sapUiBody sapUiSizeCompact" id="content">
-    <div
-        data-sap-ui-component
-        data-name="poc.cash.cashsyncui"
-        data-id="container"
-        data-settings='{"id" : "poc.cash.cashsyncui"}'
-        data-handle-validation="true"
-    ></div>
+<body class="sapUiBody sapUiSizeCompact">
+    <div class="shell-header">
+        <div class="shell-left">
+            <div class="shell-logo">
+                <svg width="36" height="18" viewBox="0 0 36 18">
+                    <rect width="36" height="18" rx="3" fill="#0a6ed1"/>
+                    <text x="18" y="13" font-family="Arial,sans-serif" font-size="10" font-weight="bold" fill="white" text-anchor="middle">SAP</text>
+                </svg>
+            </div>
+            <div class="shell-title-group">
+                <span class="shell-title">Autonomous Cash Application</span>
+                <span class="shell-subtitle">SAP S/4HANA Cloud • Generative AI Hub</span>
+            </div>
+        </div>
+        <div class="shell-right">
+            <span class="status-chip success">
+                <span class="status-dot"></span> S/4HANA (HD0_BAS) Online
+            </span>
+            <span class="status-chip info">
+                <span class="status-dot"></span> Gemini 2.5 Flash
+            </span>
+            <button id="themeToggleBtn" class="theme-btn" onclick="toggleTheme()" title="Toggle Theme (Morning / Evening Horizon)">
+                <span id="themeIcon">🌙</span> <span id="themeLabel">Dark Mode</span>
+            </button>
+        </div>
+    </div>
+    <div id="app-area">
+        <div
+            data-sap-ui-component
+            data-name="poc.cash.cashsyncui"
+            data-id="container"
+            data-settings='{"id" : "poc.cash.cashsyncui"}'
+            data-handle-validation="true"
+            style="height: 100%; width: 100%;"
+        ></div>
+    </div>
+    <script>
+        function toggleTheme() {
+            try {
+                var oCore = (sap.ui.getCore && sap.ui.getCore()) || (sap.ui.core && sap.ui.core.Core);
+                if (!oCore) return;
+                var sCurrent = oCore.getConfiguration().getTheme();
+                var bDark = sCurrent === "sap_horizon_dark";
+                var sTarget = bDark ? "sap_horizon" : "sap_horizon_dark";
+                oCore.applyTheme(sTarget);
+                document.body.classList.toggle("dark-mode", !bDark);
+                document.getElementById("themeIcon").textContent = bDark ? "🌙" : "☀️";
+                document.getElementById("themeLabel").textContent = bDark ? "Dark Mode" : "Light Mode";
+            } catch (e) {
+                console.warn("Theme toggle error", e);
+            }
+        }
+    </script>
 </body>
 </html>
