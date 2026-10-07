@@ -56,7 +56,8 @@
     "ai:cf:create": "node --import tsx scripts/configure-ai-cf.ts create",
     "ai:cf:update": "node --import tsx scripts/configure-ai-cf.ts update",
     "mail:check": "cds bind --exec -- node --import tsx scripts/mail-read.ts",
-    "mail:sync": "node --import tsx scripts/sync-mailbox.ts"
+    "mail:sync": "node --import tsx scripts/sync-mailbox.ts",
+    "pdf:test-cases": "node --import tsx scripts/generate-test-case-pdfs.ts"
   },
   "cds": {
     "server": {

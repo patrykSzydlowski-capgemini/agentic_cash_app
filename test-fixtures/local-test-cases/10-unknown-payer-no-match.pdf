@@ -1,0 +1,67 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 622 >>
+stream
+
+BT
+/F2 16 Tf 20 TL
+50 790 Td (REMITTANCE ADVICE) Tj T*
+ET
+BT
+/F1 10 Tf 14 TL
+50 750 Td
+(Payer: Blue Yonder Airlines) Tj T*
+(Address: 1 Airport Plaza, Miami, FL 33126, USA) Tj T*
+(Payment date: 2026-10-06) Tj T*
+(Payment method: Bank transfer) Tj T*
+(Payment reference: WIRE-BYA-1006) Tj T*
+ET
+BT
+/F2 10 Tf 13 TL
+50 650 Td
+(Invoice number: 8800004711) Tj T*
+(Invoice date: 2026-08-14) Tj T*
+(Invoice amount: 1,234.56 USD) Tj T*
+(Paid amount: 1,234.56 USD) Tj T*
+() Tj T*
+ET
+BT
+/F2 12 Tf 14 TL
+50 575 Td (TOTAL PAID: 1,234.56 USD) Tj T*
+ET
+BT
+/F1 9 Tf 12 TL
+50 545 Td (Payment for catering services, August 2026.) Tj T*
+ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000000924 00000 n 
+0000000994 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1069
+%%EOF

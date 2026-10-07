@@ -1,0 +1,68 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 666 >>
+stream
+
+BT
+/F2 16 Tf 20 TL
+50 790 Td (REMITTANCE ADVICE) Tj T*
+ET
+BT
+/F1 10 Tf 14 TL
+50 750 Td
+(Payer: Northwind Traders Inc.) Tj T*
+(Address: 410 Market Street, Seattle, WA 98101, USA) Tj T*
+(Payment date: 2026-09-28) Tj T*
+(Payment method: Bank transfer) Tj T*
+(Payment reference: WIRE-NW-260928-01) Tj T*
+(Payee company code: 2060) Tj T*
+ET
+BT
+/F2 10 Tf 13 TL
+50 636 Td
+(Invoice number: 9900000101) Tj T*
+(Invoice date: 2026-09-01) Tj T*
+(Invoice amount: 12,500.00 USD) Tj T*
+(Paid amount: 12,500.00 USD) Tj T*
+() Tj T*
+ET
+BT
+/F2 12 Tf 14 TL
+50 561 Td (TOTAL PAID: 12,500.00 USD) Tj T*
+ET
+BT
+/F1 9 Tf 12 TL
+50 531 Td (Settlement of invoice 9900000101 in full.) Tj T*
+ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000000968 00000 n 
+0000001038 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1113
+%%EOF
