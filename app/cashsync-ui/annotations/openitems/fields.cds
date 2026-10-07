@@ -10,6 +10,8 @@ annotate service.OpenItem with {
     ClearingStatus      @title: '{i18n>fieldClearingStatus}' @UI.Criticality: ClearingCriticality @UI.CriticalityRepresentation: #WithIcon;
     PostingDate         @title: '{i18n>fieldPostingDate}';
     DocumentDate        @title: '{i18n>fieldDocumentDate}';
+    source              @title: '{i18n>fieldOpenItemSource}' @Common.Text: sourceText @Common.TextArrangement: #TextOnly;
+    sourceText          @UI.Hidden;
     aiConfidence        @title: '{i18n>fieldAiPaidConfidence}';
     aiConfidencePercent @title: '{i18n>fieldAiPaidConfidence}' @Measures.Unit: '%';
     dismissed           @UI.Hidden;

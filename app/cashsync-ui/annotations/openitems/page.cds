@@ -21,7 +21,8 @@ annotate service.OpenItem with @(
             { $Type: 'UI.DataField', Value: InvoiceAmount,   Label: '{i18n>fieldInvoiceAmount}' },
             { $Type: 'UI.DataField', Value: ClearingStatus,  Criticality: ClearingCriticality, Label: '{i18n>fieldClearingStatus}' },
             { $Type: 'UI.DataField', Value: PostingDate,     Label: '{i18n>fieldPostingDate}' },
-            { $Type: 'UI.DataField', Value: DocumentDate,    Label: '{i18n>fieldDocumentDate}' }
+            { $Type: 'UI.DataField', Value: DocumentDate,    Label: '{i18n>fieldDocumentDate}' },
+            { $Type: 'UI.DataField', Value: source,          Label: '{i18n>fieldOpenItemSource}' }
         ]
     },
     UI.HeaderFacets : [

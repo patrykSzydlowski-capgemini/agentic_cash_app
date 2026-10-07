@@ -4,7 +4,8 @@ annotate service.OpenItem with @(
     UI.SelectionFields : [
         CustomerName,
         CompanyCode,
-        aiMatchStatus
+        aiMatchStatus,
+        source
     ],
     // Open items tab: why the AI is (not) sure the item is paid.
     UI.LineItem : [
@@ -29,9 +30,10 @@ annotate service.OpenItem with @(
         { $Type: 'UI.DataField', Value: aiRationale,         Label: '{i18n>fieldAiRationale}',         ![@HTML5.CssDefaults]: {width: '32rem'} },
         { $Type: 'UI.DataField', Value: matchedPaymentCount, Label: '{i18n>fieldMatchedPaymentCount}', ![@HTML5.CssDefaults]: {width: '7rem'} },
         { $Type: 'UI.DataField', Value: matchedAmount,       Label: '{i18n>fieldMatchedAmount}',       ![@HTML5.CssDefaults]: {width: '10rem'} },
-        { $Type: 'UI.DataField', Value: PostingDate,         Label: '{i18n>fieldPostingDate}',         ![@HTML5.CssDefaults]: {width: '9rem'} }
+        { $Type: 'UI.DataField', Value: PostingDate,         Label: '{i18n>fieldPostingDate}',         ![@HTML5.CssDefaults]: {width: '9rem'} },
+        { $Type: 'UI.DataField', Value: source,              Label: '{i18n>fieldOpenItemSource}',      ![@HTML5.CssDefaults]: {width: '8rem'} }
     ],
-    // Closed items tab: cleared (posted) in S/4HANA.
+    // Closed items tab: cleared in S/4HANA (or locally for local test items).
     UI.LineItem #Closed : [
         { $Type: 'UI.DataField', Value: OpenItemId,      Label: '{i18n>fieldOpenItemId}',      ![@HTML5.CssDefaults]: {width: '11rem'} },
         { $Type: 'UI.DataField', Value: CustomerName,    Label: '{i18n>fieldCustomerName}',    ![@HTML5.CssDefaults]: {width: '14rem'} },
@@ -49,6 +51,7 @@ annotate service.OpenItem with @(
         { $Type: 'UI.DataField', Value: PostingDate,         Label: '{i18n>fieldPostingDate}',         ![@HTML5.CssDefaults]: {width: '9rem'} },
         { $Type: 'UI.DataField', Value: DocumentDate,        Label: '{i18n>fieldDocumentDate}',        ![@HTML5.CssDefaults]: {width: '9rem'} },
         { $Type: 'UI.DataField', Value: matchedPaymentCount, Label: '{i18n>fieldMatchedPaymentCount}', ![@HTML5.CssDefaults]: {width: '7rem'} },
-        { $Type: 'UI.DataField', Value: aiRationale,         Label: '{i18n>fieldAiRationale}',         ![@HTML5.CssDefaults]: {width: '28rem'} }
+        { $Type: 'UI.DataField', Value: aiRationale,         Label: '{i18n>fieldAiRationale}',         ![@HTML5.CssDefaults]: {width: '28rem'} },
+        { $Type: 'UI.DataField', Value: source,              Label: '{i18n>fieldOpenItemSource}',      ![@HTML5.CssDefaults]: {width: '8rem'} }
     ]
 );
