@@ -4,3 +4,4 @@ ID,payer,amount,currency,valueDate,references,extractionConfidence,status,prompt
 00000001-0000-0000-0000-000000000003,"Unknown payer",250.00,USD,2026-02-12,"[]",0.30,needsReview,,,,,,"gemini-2.5-flash",1850
 00000001-0000-0000-0000-000000000004,"MultiTech Corp",2090.00,USD,2026-02-15,"[""OP-1003"",""OP-1004""]",0.95,extracted,1580,210,1790,0.0002,0.0002,"gemini-2.5-flash",2650
 00000001-0000-0000-0000-000000000005,"Adventure Works Corp.",4000.00,EUR,2026-09-20,"[""9900000106"",""9900000107""]",0.95,extracted,,,,,,"gemini-2.5-flash",2100
+00000001-0000-0000-0000-000000000006,"Northwind Traders Inc.",12500.00,USD,2026-09-21,"[""9900000101""]",0.97,extracted,,,,,,"gemini-2.5-flash",1900

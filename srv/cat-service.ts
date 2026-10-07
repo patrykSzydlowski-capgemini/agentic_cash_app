@@ -78,6 +78,14 @@ async function clearOpenItems(matches: ClearingMatch[]): Promise<ClearingResult[
     })
 }
 
+/** Nested S/4HANA OData error (`[code] message`) or the transport error text. */
+function s4ErrorMessage(err: any): string {
+    const sapError = err?.response?.data?.error || err?.cause?.response?.data?.error
+    const msg = sapError?.message
+    if (!msg) return err?.message || String(err)
+    return `${sapError.code ? `[${sapError.code}] ` : ''}${typeof msg === 'string' ? msg : msg.value || JSON.stringify(msg)}`
+}
+
 
 export default class CashSyncServiceImpl extends cds.ApplicationService {
     async init() {
@@ -1043,9 +1051,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             try {
                 results = await clearOpenItems(clearingMatches)
             } catch (networkErr: any) {
-                const s4Msg = networkErr?.response?.data?.error?.message || networkErr?.cause?.response?.data?.error?.message
-                const s4Code = networkErr?.response?.data?.error?.code || networkErr?.cause?.response?.data?.error?.code
-                const errorMsg = s4Msg ? `${s4Code ? `[${s4Code}] ` : ''}${typeof s4Msg === 'string' ? s4Msg : s4Msg.value || JSON.stringify(s4Msg)}` : (networkErr?.message || String(networkErr))
+                const errorMsg = s4ErrorMessage(networkErr)
                 LOG.error(`❌ [S/4 Clearing] S/4HANA Destination/Connectivity error: ${errorMsg}`)
                 for (const m of pendingMatches) {
                     await UPDATE.entity(ProposedMatches, m.ID).with({
@@ -1217,9 +1223,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 }])
                 result = results[0]
             } catch (networkErr: any) {
-                const s4Msg = networkErr?.response?.data?.error?.message || networkErr?.cause?.response?.data?.error?.message
-                const s4Code = networkErr?.response?.data?.error?.code || networkErr?.cause?.response?.data?.error?.code
-                const errorMsg = s4Msg ? `${s4Code ? `[${s4Code}] ` : ''}${typeof s4Msg === 'string' ? s4Msg : s4Msg.value || JSON.stringify(s4Msg)}` : (networkErr?.message || String(networkErr))
+                const errorMsg = s4ErrorMessage(networkErr)
                 LOG.error(`❌ [S/4 Clearing] Transport error connecting to S/4HANA destination: ${errorMsg}`)
                 await UPDATE.entity(ProposedMatches, ID).with({
                     reviewStatus: 'approved',
@@ -1301,6 +1305,58 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             }
         })
         const openItemTitle = enumTitleOf(cds.entities('poc.cash').OpenItem.elements as Record<string, any>)
+        // Open Items tab "Post": the operator clears the whole item (invoice amount) without a
+        // remittance match. Goes through clearOpenItems, so local test items never reach S/4HANA.
+        // Pending/approved proposals for the item become posted with the same document.
+        this.on('postOpenItem', 'OpenItem', async (req: Request) => {
+            const [{ OpenItemId }] = req.params as [{ OpenItemId: string }]
+            const item = await SELECT.one.from(DbOpenItem).where({ OpenItemId })
+                .and('dismissed is null or dismissed = false')
+            if (!item) return req.reject(404, 'OPEN_ITEM_NOT_FOUND', undefined, [OpenItemId])
+            if (item.ClearingStatus === OPEN_ITEM_CLEARING_STATUS.CLEARED) {
+                return req.reject(409, 'OPEN_ITEM_ALREADY_CLEARED', undefined, [OpenItemId])
+            }
+
+            LOG.info(`👤 [Manual Posting] Operator posting open item ${OpenItemId} (${item.CustomerAccount}, ${item.InvoiceAmount} ${item.InvoiceAmountCurr})`)
+            let result: ClearingResult
+            try {
+                [result] = await clearOpenItems([{
+                    openItemId: OpenItemId,
+                    companyCode: item.CompanyCode,
+                    amount: Number(item.InvoiceAmount),
+                    currency: item.InvoiceAmountCurr,
+                    customer: item.CustomerAccount,
+                }])
+            } catch (networkErr: any) {
+                const errorMsg = s4ErrorMessage(networkErr)
+                LOG.error(`❌ [Manual Posting] Transport error connecting to S/4HANA destination: ${errorMsg}`)
+                return req.reject(502, 'S4_CONNECTIVITY_ERROR', undefined, [errorMsg])
+            }
+            const failure = result.sapMessages.filter((m: SapMessage) => m.numericSeverity >= SAP_MESSAGE_FAILURE_SEVERITY)
+            if (failure.length > 0) {
+                const errorMsg = failure.map((m: SapMessage) => `[${m.code}] ${m.message}`).join('; ')
+                LOG.error(`❌ [Manual Posting] Posting of ${OpenItemId} rejected by S/4HANA: ${errorMsg}`)
+                return req.reject(422, 'OPEN_ITEM_POSTING_FAILED', undefined, [OpenItemId, errorMsg])
+            }
+
+            await paymentsRepository.markOpenItemsCleared([OpenItemId])
+            const matches = await paymentsRepository.findUnpostedMatchesForOpenItem(OpenItemId) as Array<{ ID: string; payment_ID?: string }>
+            await paymentsRepository.markMatchesPosted(matches.map(m => m.ID), {
+                postingId: result.postingId,
+                documentNumber: result.documentNumber,
+            })
+            // Payment is posted once none of its proposals is left unposted (this item's are posted now).
+            for (const paymentId of new Set(matches.map(m => m.payment_ID).filter((id): id is string => !!id))) {
+                const open = (await paymentsRepository.findOtherUnpostedMatches(paymentId, '') as Array<{ reviewStatus: string }>)
+                    .filter(m => m.reviewStatus !== PROPOSED_MATCH_STATUS.REJECTED)
+                if (open.length === 0) await paymentsRepository.updatePayment(paymentId, { status: PAYMENT_STATUS.POSTED })
+            }
+            LOG.info(`✅ [Manual Posting] Open item ${OpenItemId} cleared (document ${result.documentNumber}, ${matches.length} proposal(s) posted).`)
+            await assessOpenItems()
+            req.info('OPEN_ITEM_POSTED', undefined, [OpenItemId, result.documentNumber])
+            return SELECT.one.from(req.subject)
+        })
+
         this.after('READ', 'OpenItem', (result: unknown) => {
             for (const item of rowsOf(result)) {
                 if ('source' in item) item.sourceText = openItemTitle('source', item.source ?? OPEN_ITEM_SOURCE.S4)

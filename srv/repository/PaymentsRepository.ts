@@ -73,6 +73,20 @@ export class PaymentsRepository {
             .and({ reviewStatus: { '!=': 'posted' } })
     }
 
+    /** Proposals still waiting for a posting decision (not posted, not rejected) on one open item. */
+    async findUnpostedMatchesForOpenItem(openItemId: string) {
+        return SELECT.from(this.proposedMatches)
+            .where({ openItemId })
+            .and({ reviewStatus: { 'not in': [PROPOSED_MATCH_STATUS.POSTED, PROPOSED_MATCH_STATUS.REJECTED] } })
+    }
+
+    async markMatchesPosted(matchIds: string[], posting: { postingId: string; documentNumber: string }) {
+        if (!matchIds || matchIds.length === 0) return 0
+        return UPDATE(this.proposedMatches)
+            .set({ reviewStatus: PROPOSED_MATCH_STATUS.POSTED, ...posting, postingError: null })
+            .where({ ID: { in: matchIds } })
+    }
+
     async insertProposedMatches(matches: Array<Record<string, unknown>>) {
         if (!matches || matches.length === 0) return []
         return INSERT.into(this.proposedMatches).entries(matches)

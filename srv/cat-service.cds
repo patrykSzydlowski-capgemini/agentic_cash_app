@@ -9,6 +9,7 @@ service CashSyncService {
     // AI assessment fields are written by Agent 3 of the pipeline only.
     // Only DELETE is accepted (soft delete -> dismissed = true, see cat-service.ts);
     // CREATE/UPDATE are rejected because S/4HANA is the source of truth.
+    // postOpenItem = manual clearing by the operator (S/4HANA; local test items locally).
     entity OpenItem as projection on my.OpenItem {
         *,
         case
@@ -26,7 +27,10 @@ service CashSyncService {
         cast(coalesce(aiConfidence, 0) * 100 as Integer) as aiConfidencePercent : Integer,
         // Localized enum title of `source` (S/4HANA vs. local test item), filled by an after-READ handler.
         virtual sourceText : String
-    } where dismissed is null or dismissed = false;
+    } where dismissed is null or dismissed = false
+      actions {
+        action postOpenItem() returns OpenItem;
+    };
 
     @cds.odata.expand: [ 'open_item' ]
     entity MatchResult as projection on my.MatchResult {

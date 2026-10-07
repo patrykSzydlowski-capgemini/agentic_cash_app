@@ -421,6 +421,36 @@ test('posting a payment for local test items clears them locally without calling
     assert.equal((await get(`/Payments('${id}')`)).status, 'posted');
 });
 
+test('postOpenItem posts a selected local open item manually and moves it to the closed items', async () => {
+    const response = await postRaw(`/OpenItem('9900000103')/CashSyncService.postOpenItem`, {});
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal((await response.json()).ClearingStatus, 'CLEARED');
+    const closed = (await get(`/OpenItem?$filter=ClearingStatus eq 'CLEARED' and OpenItemId eq '9900000103'`)).value;
+    assert.equal(closed.length, 1, 'posted item is listed on the Closed Items tab');
+
+    const again = await postRaw(`/OpenItem('9900000103')/CashSyncService.postOpenItem`, {});
+    assert.equal(again.status, 409, 'an already cleared item cannot be posted twice');
+});
+
+test('postOpenItem also posts the proposals pointing to the item and their payment', async () => {
+    const paymentId = '00000001-0000-0000-0000-000000000006';
+    const matched = await (await post(`/Payments('${paymentId}')/CashSyncService.reprocessWithAI`, {})).json();
+    assert.equal(matched.status, 'matched', 'Northwind pays 9900000101 exactly');
+
+    const response = await postRaw(`/OpenItem('9900000101')/CashSyncService.postOpenItem`, {});
+    assert.equal(response.status, 200, await response.clone().text());
+    const [match] = (await get(`/ProposedMatches?$filter=payment_ID eq ${paymentId}`)).value;
+    assert.equal(match.reviewStatus, 'posted');
+    assert.equal(match.documentNumber, 'LOCAL-9900000101');
+    assert.equal((await get(`/Payments('${paymentId}')`)).status, 'posted');
+});
+
+test('postOpenItem on an S/4 item fails cleanly when S/4HANA is unreachable and keeps the item open', async () => {
+    const response = await postRaw(`/OpenItem('9123456999')/CashSyncService.postOpenItem`, {});
+    assert.equal(response.status, 502, await response.clone().text());
+    assert.equal((await get(`/OpenItem('9123456999')`)).ClearingStatus, 'OPEN');
+});
+
 test('syncMailbox (Agent 1) stores only new PDF mails and is idempotent', async () => {
     // revalidatePipeline above may already have run Agent 1, so check the stored state.
     const first = await post('/syncMailbox', {});
