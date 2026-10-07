@@ -37,7 +37,10 @@ import {
     INGESTION_PROCESSING_STATUS,
     OPEN_ITEM_CLEARING_STATUS,
     MATCH_STATUS,
+    PIPELINE_RUN_STATUS,
+    PIPELINE_RUN_TRIGGER,
 } from './constants/index.js'
+import type { PipelineRunTrigger } from './constants/index.js'
 import { ApplicationError } from './core/errors/ApplicationError.js'
 import { paymentsRepository } from './repository/index.js'
 
@@ -262,7 +265,96 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             clearingStatus: String(row.ClearingStatus ?? OPEN_ITEM_CLEARING_STATUS.OPEN),
         })
 
-        const loadOpenItems = async (): Promise<AssessableOpenItem[]> => {
+        // Per-run statistics, persisted as one PipelineRuns row ("AI Agent Performance" tab).
+        interface RunStats {
+            newMails: number
+            pdfsReceived: number
+            filesExtracted: number
+            extractionFailed: number
+            erpLive: boolean | null
+            openItemsSynced: number
+            openItemsOpen: number
+            openItemsAssessed: number
+            paymentsEvaluated: number
+            paymentsMatched: number
+            paymentsReview: number
+            aiCalls: number
+            promptTokens: number
+            completionTokens: number
+            extractionTokens: number
+            matchingTokens: number
+            estimatedCost: number
+            capacityUnits: number
+            aiModel: string | null
+            erpSyncMs: number
+            mailIntakeMs: number
+            extractionMs: number
+            matchingMs: number
+        }
+
+        const newRunStats = (): RunStats => ({
+            newMails: 0, pdfsReceived: 0, filesExtracted: 0, extractionFailed: 0,
+            erpLive: null, openItemsSynced: 0, openItemsOpen: 0, openItemsAssessed: 0,
+            paymentsEvaluated: 0, paymentsMatched: 0, paymentsReview: 0,
+            aiCalls: 0, promptTokens: 0, completionTokens: 0, extractionTokens: 0, matchingTokens: 0,
+            estimatedCost: 0, capacityUnits: 0, aiModel: null,
+            erpSyncMs: 0, mailIntakeMs: 0, extractionMs: 0, matchingMs: 0,
+        })
+
+        const recordAiUsage = (stats: RunStats | undefined, stage: 'extraction' | 'matching', model: string, promptTokens: number, completionTokens: number) => {
+            if (!stats) return
+            const total = promptTokens + completionTokens
+            stats.promptTokens += promptTokens
+            stats.completionTokens += completionTokens
+            if (stage === 'extraction') stats.extractionTokens += total
+            else stats.matchingTokens += total
+            stats.estimatedCost += calculateTokenCost(model, promptTokens, completionTokens)
+            stats.capacityUnits += calculateCapacityUnits(model, promptTokens, completionTokens)
+            stats.aiModel = model
+        }
+
+        const round4 = (value: number) => Math.round(value * 10000) / 10000
+
+        // Wraps one pipeline run: inserts a `running` row, stores the stats when done.
+        // Known limitation: inside a request transaction a failing run is rolled back
+        // together with its row (a separate tx would risk SQLite lock contention).
+        const trackPipelineRun = async <T>(trigger: PipelineRunTrigger, task: (stats: RunStats) => Promise<T>): Promise<T> => {
+            const ID = randomUUID()
+            const startedAt = Date.now()
+            const stats = newRunStats()
+            await paymentsRepository.insertPipelineRun({
+                ID,
+                trigger,
+                startedAt: new Date(startedAt).toISOString(),
+                status: PIPELINE_RUN_STATUS.RUNNING,
+            })
+            const finish = (status: string, errorMessage: string | null) => paymentsRepository.updatePipelineRun(ID, {
+                ...stats,
+                // Providers that report no usage still name the model that was called.
+                aiModel: stats.aiModel || (stats.aiCalls > 0 ? activeModelName() : null),
+                totalTokens: stats.promptTokens + stats.completionTokens,
+                estimatedCost: round4(stats.estimatedCost),
+                capacityUnits: round4(stats.capacityUnits),
+                finishedAt: new Date().toISOString(),
+                durationMs: Date.now() - startedAt,
+                status,
+                errorMessage,
+            })
+            try {
+                const result = await task(stats)
+                await finish(PIPELINE_RUN_STATUS.COMPLETED, null)
+                LOG.info('[Pipeline Run] Recorded', { trigger, durationMs: Date.now() - startedAt, totalTokens: stats.promptTokens + stats.completionTokens, aiCalls: stats.aiCalls })
+                return result
+            } catch (err) {
+                await finish(PIPELINE_RUN_STATUS.FAILED, (err as Error).message)
+                    .catch(updateErr => LOG.warn('[Pipeline Run] Could not record failed run', { error: (updateErr as Error).message }))
+                throw err
+            }
+        }
+
+        // S/4 sync; returns the active (not dismissed) items used as the matching pool.
+        const loadOpenItems = async (stats?: RunStats): Promise<AssessableOpenItem[]> => {
+            const tStart = Date.now()
             try {
                 const liveItems = await getLiveOpenItems()
                 const rows = liveItems.map(item => ({
@@ -282,12 +374,20 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 await paymentsRepository.deleteOpenItemsNotIn(rows.map(row => row.OpenItemId))
                 const cleared = rows.filter(row => row.ClearingStatus === OPEN_ITEM_CLEARING_STATUS.CLEARED).length
                 LOG.info('[ERP Sync] Open items synchronized from S/4HANA', { total: rows.length, open: rows.length - cleared, cleared })
-                return rows.map(toAssessableOpenItem)
+                if (stats) {
+                    stats.erpLive = true
+                    stats.openItemsSynced = rows.length
+                }
             } catch (err) {
-                const rows = await paymentsRepository.findAllCachedOpenItems() as Array<Record<string, unknown>>
-                LOG.warn('[ERP Sync] S/4HANA unreachable, using cached open items', { error: (err as Error).message, cached: rows.length })
-                return rows.map(toAssessableOpenItem)
+                LOG.warn('[ERP Sync] S/4HANA unreachable, using cached open items', { error: (err as Error).message })
+                if (stats) stats.erpLive = false
             }
+            const active = (await paymentsRepository.findAllCachedOpenItems() as Array<Record<string, unknown>>).map(toAssessableOpenItem)
+            if (stats) {
+                stats.openItemsOpen = active.filter(item => item.clearingStatus === OPEN_ITEM_CLEARING_STATUS.OPEN).length
+                stats.erpSyncMs += Date.now() - tStart
+            }
+            return active
         }
 
         type ProviderModule = Awaited<ReturnType<typeof resolveProvider>>
@@ -342,7 +442,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
         const AGENT_CONCURRENCY = 3
 
         // Agent 1: new mails with a PDF -> IngestionLog rows (status received).
-        const runMailIntakeAgent = async (): Promise<Array<Record<string, unknown>>> => {
+        const runMailIntakeAgent = async (stats?: RunStats): Promise<Array<Record<string, unknown>>> => {
             const messages = await fetchNewPdfMailboxMessages(messageId => paymentsRepository.hasLoggedMessage(messageId))
             const created: Array<Record<string, unknown>> = []
             for (const message of messages) {
@@ -365,6 +465,10 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 }
             }
             LOG.info('[Agent 1: Mail intake] Completed', { newMails: messages.length, newPdfs: created.length })
+            if (stats) {
+                stats.newMails += messages.length
+                stats.pdfsReceived += created.length
+            }
             return created
         }
 
@@ -380,8 +484,10 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             pdf: Buffer,
             provider: ProviderModule,
             source: { fileName?: string | null; emailSubject?: string | null; sender?: string | null; existingPaymentId?: string | null },
+            stats?: RunStats,
         ): Promise<ExtractionOutcome> => {
             const tStart = Date.now()
+            if (stats) stats.aiCalls++
             const paymentId = source.existingPaymentId || randomUUID()
             const extractFn = (provider as any).extractDocumentWithUsage || provider.extractDocument
             let record: Record<string, unknown>
@@ -398,6 +504,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 const hasUsage = payment.totalTokens != null || payment.promptTokens != null
                 const promptTokens = Number(payment.promptTokens ?? 0)
                 const completionTokens = Number(payment.completionTokens ?? 0)
+                if (hasUsage) recordAiUsage(stats, 'extraction', model, promptTokens, completionTokens)
                 record = {
                     payer: payment.payer,
                     companyCode: payment.companyCode || null,
@@ -440,6 +547,10 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 await paymentsRepository.insertPayment({ ID: paymentId, ...record, attachmentContent: pdf })
             }
             LOG.info('[Agent 2: Extraction] Payment stored', { paymentId, status, payer: record.payer, amount: record.amount, currency: record.currency, processingTimeMs })
+            if (stats) {
+                if (status === PAYMENT_STATUS.FAILED) stats.extractionFailed++
+                else stats.filesExtracted++
+            }
             return { paymentId, status, processingTimeMs }
         }
 
@@ -455,7 +566,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             paymentRow: Record<string, any>,
             openItems: AssessableOpenItem[],
             provider: ProviderModule,
-            options: { emailSubject?: string | null; emailBody?: string | null; baseProcessingMs?: number } = {},
+            options: { emailSubject?: string | null; emailBody?: string | null; baseProcessingMs?: number; stats?: RunStats } = {},
         ): Promise<MatchingOutcome> => {
             const tStart = Date.now()
             const paymentId = String(paymentRow.ID)
@@ -493,6 +604,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 const aiPool = selectAiCandidates(payment, pool)
                 let ai: AiMatchingResponse | null = null
                 if (aiPool.length > 0) {
+                    if (options.stats) options.stats.aiCalls++
                     try {
                         const result = await callText(provider, buildMatchingPrompt(payment, aiPool, {
                             emailSubject: options.emailSubject,
@@ -554,6 +666,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             }
             if (usage) {
                 const model = usedModel || paymentRow.aiModel || activeModelName()
+                recordAiUsage(options.stats, 'matching', model, usage.promptTokens, usage.completionTokens)
                 const promptTokens = Number(paymentRow.promptTokens ?? 0) + usage.promptTokens
                 const completionTokens = Number(paymentRow.completionTokens ?? 0) + usage.completionTokens
                 Object.assign(changes, {
@@ -574,11 +687,16 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 bestScore,
                 candidates: candidates.map(c => `${c.openItemId}:${c.matchScore}`),
             })
+            if (options.stats) {
+                options.stats.paymentsEvaluated++
+                if (status === PAYMENT_STATUS.MATCHED) options.stats.paymentsMatched++
+                else options.stats.paymentsReview++
+            }
             return { status, candidates, bestScore, rationale }
         }
 
         // Agent 3b: per OPEN item, how sure are we that it is paid (all payments combined).
-        const assessOpenItems = async (): Promise<number> => {
+        const assessOpenItems = async (stats?: RunStats): Promise<number> => {
             const [items, matches, payments] = await Promise.all([
                 paymentsRepository.findOpenItemsByStatus(OPEN_ITEM_CLEARING_STATUS.OPEN) as Promise<Array<Record<string, unknown>>>,
                 paymentsRepository.findAllProposedMatches() as Promise<Array<Record<string, any>>>,
@@ -620,6 +738,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 await paymentsRepository.updateOpenItemAssessment(item.openItemId, { ...assessment, assessedAt })
             }
             LOG.info('[Agent 3: Assessment] Open items assessed', { openItems: items.length, withEvidence: evidenceByItem.size })
+            if (stats) stats.openItemsAssessed = items.length
             return items.length
         }
 
@@ -640,19 +759,21 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
 
         // full=false: new mails only (startup, syncMailbox, scheduler).
         // full=true:  also retries failed extractions and re-matches every unposted payment.
-        const runAgentPipeline = async ({ full }: { full: boolean }): Promise<PipelineSummary> => {
+        const runAgentPipeline = async ({ full }: { full: boolean }, stats: RunStats): Promise<PipelineSummary> => {
             const tStart = Date.now()
             LOG.info('[Pipeline] Started', { mode: full ? 'full' : 'incremental', engine: providerMode() })
             const provider = await resolveProvider()
 
-            const openItems = await loadOpenItems()
+            const openItems = await loadOpenItems(stats)
 
             let newLogs: Array<Record<string, unknown>> = []
+            const tMail = Date.now()
             try {
-                newLogs = await runMailIntakeAgent()
+                newLogs = await runMailIntakeAgent(stats)
             } catch (err) {
                 LOG.warn('[Agent 1: Mail intake] Mailbox unavailable', { error: (err as Error).message })
             }
+            stats.mailIntakeMs = Date.now() - tMail
 
             const logs = [
                 ...await paymentsRepository.findPendingIngestionLogs() as Array<Record<string, any>>,
@@ -660,10 +781,12 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             ]
             const extractionMs = new Map<string, number>()
             let failed = 0
+            const tExtraction = Date.now()
             await mapWithConcurrency(logs, AGENT_CONCURRENCY, async (log) => {
                 const pdf = await toBuffer(log.attachmentContent)
                 if (pdf.length === 0) {
                     failed++
+                    stats.extractionFailed++
                     await paymentsRepository.updateIngestionLog(log.ID, {
                         processingStatus: INGESTION_PROCESSING_STATUS.FAILED,
                         classificationReason: 'Pusty załącznik PDF.',
@@ -675,7 +798,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                     emailSubject: log.subject,
                     sender: log.sender,
                     existingPaymentId: log.payment_ID,
-                })
+                }, stats)
                 extractionMs.set(outcome.paymentId, outcome.processingTimeMs)
                 if (outcome.status === PAYMENT_STATUS.FAILED) failed++
                 await paymentsRepository.updateIngestionLog(log.ID, {
@@ -685,6 +808,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                         : INGESTION_PROCESSING_STATUS.EXTRACTED,
                 })
             })
+            stats.extractionMs = Date.now() - tExtraction
 
             const statuses: string[] = full
                 ? [PAYMENT_STATUS.EXTRACTED, PAYMENT_STATUS.MATCHED, PAYMENT_STATUS.NEEDS_REVIEW]
@@ -693,11 +817,13 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 .filter(p => statuses.includes(p.status))
                 // Unreliable extractions stay in review; matching them would only produce noise.
                 .filter(p => Number(p.extractionConfidence ?? 0) >= LOW_CONFIDENCE_THRESHOLD && Number(p.amount ?? 0) > 0)
+            const tMatching = Date.now()
             const outcomes = await mapWithConcurrency(candidates, AGENT_CONCURRENCY, async (payment) => {
                 const context = await emailContextForPayment(payment.ID)
-                return runMatchingAgent(payment, openItems, provider, { ...context, baseProcessingMs: extractionMs.get(payment.ID) })
+                return runMatchingAgent(payment, openItems, provider, { ...context, baseProcessingMs: extractionMs.get(payment.ID), stats })
             })
-            await assessOpenItems()
+            await assessOpenItems(stats)
+            stats.matchingMs = Date.now() - tMatching
 
             const summary: PipelineSummary = {
                 openItems: openItems.length,
@@ -714,9 +840,10 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
 
         // One pipeline run at a time across startup, scheduler and UI actions.
         let activePipeline: Promise<PipelineSummary> | null = null
-        const startPipeline = (full: boolean): Promise<PipelineSummary> | null => {
+        const startPipeline = (full: boolean, trigger: PipelineRunTrigger): Promise<PipelineSummary> | null => {
             if (activePipeline) return null
-            activePipeline = runAgentPipeline({ full }).finally(() => { activePipeline = null })
+            activePipeline = trackPipelineRun(trigger, stats => runAgentPipeline({ full }, stats))
+                .finally(() => { activePipeline = null })
             return activePipeline
         }
 
@@ -737,19 +864,24 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
         }
 
         // Manual upload = Agent 2 + Agent 3 for a single PDF (no mailbox step).
-        const processUploadedPdf = (pdf: Buffer, fileName?: string) => queueProcessing(async () => {
+        const processUploadedPdf = (pdf: Buffer, fileName?: string) => queueProcessing(() => trackPipelineRun(PIPELINE_RUN_TRIGGER.UPLOAD, async (stats) => {
             const provider = await resolveProvider()
-            const openItems = await loadOpenItems()
-            const extraction = await runExtractionAgent(pdf, provider, { fileName })
+            const openItems = await loadOpenItems(stats)
+            stats.pdfsReceived = 1
+            const tExtraction = Date.now()
+            const extraction = await runExtractionAgent(pdf, provider, { fileName }, stats)
+            stats.extractionMs = Date.now() - tExtraction
             let matchCount = 0
+            const tMatching = Date.now()
             if (extraction.status === PAYMENT_STATUS.EXTRACTED) {
                 const payment = await paymentsRepository.findPaymentById(extraction.paymentId)
-                const outcome = await runMatchingAgent(payment as Record<string, any>, openItems, provider, { baseProcessingMs: extraction.processingTimeMs })
+                const outcome = await runMatchingAgent(payment as Record<string, any>, openItems, provider, { baseProcessingMs: extraction.processingTimeMs, stats })
                 matchCount = outcome.candidates.length
             }
-            await assessOpenItems()
+            await assessOpenItems(stats)
+            stats.matchingMs = Date.now() - tMatching
             return { paymentId: extraction.paymentId, matchCount }
-        })
+        }))
 
         this.on('processPaymentDocument', async (req: Request) => {
             const { pdfBase64 } = req.data as ProcessPaymentDocumentPayload
@@ -774,7 +906,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
 
         // Incremental run: Agent 1 (new PDF mails) -> Agent 2 -> Agent 3.
         this.on('syncMailbox', async (req: Request) => {
-            const run = startPipeline(false)
+            const run = startPipeline(false, PIPELINE_RUN_TRIGGER.MAIL_SYNC)
             if (!run) return req.reject(409, 'PIPELINE_BUSY')
             try {
                 const summary = await run
@@ -789,7 +921,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
 
         // Full run: S/4 resync, retry failed extractions, re-match every unposted payment.
         this.on('revalidatePipeline', async (req: Request) => {
-            const run = startPipeline(true)
+            const run = startPipeline(true, PIPELINE_RUN_TRIGGER.REVALIDATION)
             if (!run) return req.reject(409, 'PIPELINE_BUSY')
             try {
                 const summary = await run
@@ -810,10 +942,15 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                 return req.error(400, 'PAYMENT_ALREADY_POSTED', undefined, [payment.payer])
             }
 
-            const provider = await resolveProvider()
-            const openItems = await loadOpenItems()
-            const outcome = await runMatchingAgent(payment, openItems, provider, await emailContextForPayment(ID))
-            await assessOpenItems()
+            const outcome = await trackPipelineRun(PIPELINE_RUN_TRIGGER.REPROCESS, async (stats) => {
+                const provider = await resolveProvider()
+                const openItems = await loadOpenItems(stats)
+                const tMatching = Date.now()
+                const result = await runMatchingAgent(payment, openItems, provider, { ...await emailContextForPayment(ID), stats })
+                await assessOpenItems(stats)
+                stats.matchingMs = Date.now() - tMatching
+                return result
+            })
 
             const score = outcome.bestScore.toFixed(2)
             if (outcome.candidates.length > 0) {
@@ -970,7 +1107,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             }
         })
 
-        // AI Analytics Statistics endpoint: aggregate KPIs across all processed payments
+        // KPI dialog of the "AI Agent Performance" tab: aggregates over finished pipeline runs.
         function calculateMedian(arr: number[]): number {
             if (arr.length === 0) return 0
             const sorted = [...arr].sort((a, b) => a - b)
@@ -982,84 +1119,40 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
         }
 
         this.on('getAiStatistics', async () => {
-            const payments = await paymentsRepository.findAllPayments() as any[]
-            const promptArr: number[] = []
-            const completionArr: number[] = []
-            const tokensArr: number[] = []
-            const costArr: number[] = []
-            const cuArr: number[] = []
-            const durationArr: number[] = []
-
-            let totalPrompt = 0
-            let totalCompletion = 0
-            let totalTokens = 0
-            let totalCost = 0
-            let totalCU = 0
-            let totalProcessed = 0
-            let totalDurationMs = 0
-
-            for (const p of payments) {
-                if (p.totalTokens != null || p.promptTokens != null) {
-                    const prompt = Number(p.promptTokens ?? 0)
-                    const completion = Number(p.completionTokens ?? 0)
-                    const tokens = Number(p.totalTokens ?? (prompt + completion))
-                    const cost = Number(p.estimatedCost ?? 0)
-                    const cu = Number(p.capacityUnits ?? calculateCapacityUnits(p.aiModel || activeModelName(), prompt, completion))
-                    const duration = Number(p.processingTimeMs ?? 0)
-
-                    promptArr.push(prompt)
-                    completionArr.push(completion)
-                    tokensArr.push(tokens)
-                    costArr.push(cost)
-                    cuArr.push(cu)
-                    durationArr.push(duration)
-
-                    totalPrompt += prompt
-                    totalCompletion += completion
-                    totalTokens += tokens
-                    totalCost += cost
-                    totalCU += cu
-                    totalDurationMs += duration
-                    totalProcessed++
-                }
-            }
-
-            const avgProcessingTimeMs = totalProcessed > 0 ? Math.round(totalDurationMs / totalProcessed) : 0
-            const avgTokensPerPayment = totalProcessed > 0 ? Math.round(totalTokens / totalProcessed) : 0
-            const avgPromptTokens = totalProcessed > 0 ? Math.round(totalPrompt / totalProcessed) : 0
-            const avgCompletionTokens = totalProcessed > 0 ? Math.round(totalCompletion / totalProcessed) : 0
-            const avgCost = totalProcessed > 0 ? Math.round((totalCost / totalProcessed) * 10000) / 10000 : 0
-            const avgCapacityUnits = totalProcessed > 0 ? Math.round((totalCU / totalProcessed) * 10000) / 10000 : 0
-
-            const medianProcessingTimeMs = Math.round(calculateMedian(durationArr))
-            const medianTokensPerPayment = Math.round(calculateMedian(tokensArr))
-            const medianPromptTokens = Math.round(calculateMedian(promptArr))
-            const medianCompletionTokens = Math.round(calculateMedian(completionArr))
-            const medianCost = Math.round(calculateMedian(costArr) * 10000) / 10000
-            const medianCapacityUnits = Math.round(calculateMedian(cuArr) * 10000) / 10000
-
-            const activeModel = activeModelName()
+            const runs = await paymentsRepository.findFinishedPipelineRuns() as Array<Record<string, any>>
+            const num = (value: unknown) => Number(value ?? 0)
+            const sum = (field: string) => runs.reduce((total, run) => total + num(run[field]), 0)
+            const totalRuns = runs.length
+            const totalTokens = sum('totalTokens')
+            const totalCost = sum('estimatedCost')
+            const totalFilesExtracted = sum('filesExtracted')
+            const durations = runs.map(run => num(run.durationMs))
+            const tokens = runs.map(run => num(run.totalTokens))
+            const last = runs[0]
 
             return {
-                totalPromptTokens: totalPrompt,
-                totalCompletionTokens: totalCompletion,
+                totalRuns,
+                failedRuns: runs.filter(run => run.status === PIPELINE_RUN_STATUS.FAILED).length,
+                totalPromptTokens: sum('promptTokens'),
+                totalCompletionTokens: sum('completionTokens'),
                 totalTokens,
-                totalCost: Math.round(totalCost * 10000) / 10000,
-                totalCapacityUnits: Math.round(totalCU * 10000) / 10000,
-                totalProcessed,
-                avgProcessingTimeMs,
-                avgTokensPerPayment,
-                avgPromptTokens,
-                avgCompletionTokens,
-                avgCost,
-                avgCapacityUnits,
-                medianProcessingTimeMs,
-                medianTokensPerPayment,
-                medianPromptTokens,
-                medianCompletionTokens,
-                medianCost,
-                medianCapacityUnits,
-                activeModel,
+                totalCost: round4(totalCost),
+                totalCapacityUnits: round4(sum('capacityUnits')),
+                totalAiCalls: sum('aiCalls'),
+                totalFilesExtracted,
+                totalPaymentsEvaluated: sum('paymentsEvaluated'),
+                totalPaymentsMatched: sum('paymentsMatched'),
+                avgDurationMs: totalRuns > 0 ? Math.round(sum('durationMs') / totalRuns) : 0,
+                avgTokensPerRun: totalRuns > 0 ? Math.round(totalTokens / totalRuns) : 0,
+                avgCostPerRun: totalRuns > 0 ? round4(totalCost / totalRuns) : 0,
+                medianDurationMs: Math.round(calculateMedian(durations)),
+                medianTokensPerRun: Math.round(calculateMedian(tokens)),
+                avgTokensPerFile: totalFilesExtracted > 0 ? Math.round(sum('extractionTokens') / totalFilesExtracted) : 0,
+                lastRunAt: last?.startedAt ?? null,
+                lastRunDurationMs: last ? num(last.durationMs) : 0,
+                lastRunTokens: last ? num(last.totalTokens) : 0,
+                lastRunOpenItems: last ? num(last.openItemsOpen) : 0,
+                activeModel: last?.aiModel || activeModelName(),
             }
         })
 
@@ -1158,6 +1251,30 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             return SELECT.one.from(ProposedMatches, ID)
         })
 
+        // Open/Closed Items tabs: "Delete" hides the item (soft delete). S/4HANA stays the
+        // source of truth, so a hard delete would be undone by the next UPSERT sync.
+        // Enum values of a run are technical ('mailSync'); show their @title texts instead.
+        const runElements = cds.entities('poc.cashapp').PipelineRuns.elements as Record<string, any>
+        const enumTitle = (element: string, value: unknown) => {
+            const title = runElements[element]?.enum?.[String(value)]?.['@title'] as string | undefined
+            const key = title && /^\{i18n>(.+)\}$/.exec(title)?.[1]
+            return (key && cds.i18n.labels.at(key)) || (value as string | null)
+        }
+        this.after('READ', 'PipelineRuns', (result: unknown) => {
+            for (const run of (Array.isArray(result) ? result : result ? [result] : []) as Array<Record<string, unknown>>) {
+                if ('trigger' in run) run.triggerText = enumTitle('trigger', run.trigger)
+                if ('status' in run) run.statusText = enumTitle('status', run.status)
+            }
+        })
+
+        this.before(['CREATE', 'UPDATE'], 'OpenItem', (req: Request) => req.reject(405, 'OPEN_ITEM_READ_ONLY'))
+        this.on('DELETE', 'OpenItem', async (req: Request) => {
+            const [{ OpenItemId }] = req.params as [{ OpenItemId: string }]
+            const changed = await paymentsRepository.dismissOpenItems([OpenItemId])
+            if (!changed) return req.reject(404, 'OPEN_ITEM_NOT_FOUND', undefined, [OpenItemId])
+            LOG.info(`🗑️ [Delete] Open item ${OpenItemId} dismissed (hidden; S/4HANA unchanged)`)
+        })
+
         // Cascade cleanup when Payments are deleted by user from the UI
         this.before('DELETE', 'Payments', async (req: Request) => {
             const id = req.data?.ID || (req.params as [{ ID?: string }])?.[0]?.ID
@@ -1182,7 +1299,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
         // the server is ready immediately. AGENT_PIPELINE_ON_STARTUP=false disables it (tests).
         cds.on('served', () => {
             if (process.env.AGENT_PIPELINE_ON_STARTUP === 'false') return
-            const run = startPipeline(false)
+            const run = startPipeline(false, PIPELINE_RUN_TRIGGER.STARTUP)
             run?.catch(err => LOG.warn('[Bootstrap] Startup pipeline failed', { error: (err as Error).message }))
         })
 

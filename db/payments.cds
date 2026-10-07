@@ -3,3 +3,4 @@
 using from './entities/payments';
 using from './entities/proposed-matches';
 using from './entities/ingestion-log';
+using from './entities/pipeline-runs';

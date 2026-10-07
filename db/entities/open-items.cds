@@ -36,6 +36,9 @@ entity OpenItem {
       matchedPaymentCount : Integer;
       matchedAmount       : Decimal(15, 2);
       assessedAt          : Timestamp;
+      // Soft delete from the UI ("Delete" on Open/Closed Items): hidden from the
+      // service and the matching pool; S/4 sync (UPSERT) never resets it.
+      dismissed           : Boolean default false;
       matches          : Association to many MatchResult on matches.open_item = $self;
       proposedMatches  : Association to many ProposedMatches on proposedMatches.openItemId = OpenItemId;
 }

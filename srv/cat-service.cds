@@ -7,7 +7,8 @@ service CashSyncService {
 
     // Local-first cache of S/4HANA open items (open + cleared), synced at startup / revalidation.
     // AI assessment fields are written by Agent 3 of the pipeline only.
-    @readonly
+    // Only DELETE is accepted (soft delete -> dismissed = true, see cat-service.ts);
+    // CREATE/UPDATE are rejected because S/4HANA is the source of truth.
     entity OpenItem as projection on my.OpenItem {
         *,
         case
@@ -20,8 +21,10 @@ service CashSyncService {
             when 'CLEARED' then 5
             when 'OPEN'    then 2
             else 0
-        end as ClearingCriticality : Integer
-    };
+        end as ClearingCriticality : Integer,
+        // Confidence as 0..100 for the progress bar (null -> 0, never "of 1").
+        cast(coalesce(aiConfidence, 0) * 100 as Integer) as aiConfidencePercent : Integer
+    } where dismissed is null or dismissed = false;
 
     @cds.odata.expand: [ 'open_item' ]
     entity MatchResult as projection on my.MatchResult {
@@ -99,68 +102,46 @@ service CashSyncService {
         end as DecisionCriticality : Integer
     };
 
-    @readonly entity AiAnalytics     as projection on app.Payments {
-        ID,
-        createdAt,
-        modifiedAt,
-        payer,
-        amount,
-        currency,
-        valueDate,
-        status,
-        extractionConfidence,
-        promptTokens,
-        completionTokens,
-        totalTokens,
-        estimatedCost,
-        capacityUnits,
-        aiModel,
-        processingTimeMs,
+    // "AI Agent Performance" tab: one row per pipeline run.
+    @readonly entity PipelineRuns    as projection on app.PipelineRuns {
+        *,
         case status
-            when 'posted'      then 5
-            when 'cleared'     then 5
-            when 'matched'     then 3
-            when 'extracted'   then 2
-            when 'needsReview' then 2
+            when 'completed' then 3
+            when 'running'   then 2
+            when 'failed'    then 1
             else 0
         end as StatusCriticality : Integer,
-        case status
-            when 'matched'     then 'Matched'
-            when 'needsReview' then 'Pending Review'
-            when 'cleared'     then 'Posted'
-            when 'posted'      then 'Posted'
-            when 'extracted'   then 'Extracted'
-            when 'failed'      then 'Failed'
-            else status
-        end as statusText : String,
-        case
-            when status = 'posted' or status = 'cleared' then 5
-            when extractionConfidence >= 0.80 then 3
-            else 2
-        end as ConfidenceCriticality : Integer
+        // Localized enum titles, filled by an after-READ handler (cds.i18n.labels).
+        virtual triggerText      : String,
+        virtual statusText       : String
     };
 
+    // KPI dialog: aggregates over all finished pipeline runs.
     type AiStatisticsRecord {
+        totalRuns                : Integer;
+        failedRuns               : Integer;
         totalPromptTokens        : Integer;
         totalCompletionTokens    : Integer;
         totalTokens              : Integer;
         totalCost                : Decimal(10, 4);
         totalCapacityUnits       : Decimal(10, 4);
-        totalProcessed           : Integer;
-        // Mean / Average metrics
-        avgProcessingTimeMs      : Integer;
-        avgTokensPerPayment      : Integer;
-        avgPromptTokens          : Integer;
-        avgCompletionTokens      : Integer;
-        avgCost                  : Decimal(10, 4);
-        avgCapacityUnits         : Decimal(10, 4);
-        // Median metrics
-        medianProcessingTimeMs   : Integer;
-        medianTokensPerPayment   : Integer;
-        medianPromptTokens       : Integer;
-        medianCompletionTokens   : Integer;
-        medianCost               : Decimal(10, 4);
-        medianCapacityUnits      : Decimal(10, 4);
+        totalAiCalls             : Integer;
+        totalFilesExtracted      : Integer;
+        totalPaymentsEvaluated   : Integer;
+        totalPaymentsMatched     : Integer;
+        // Per-run averages / medians
+        avgDurationMs            : Integer;
+        avgTokensPerRun          : Integer;
+        avgCostPerRun            : Decimal(10, 4);
+        medianDurationMs         : Integer;
+        medianTokensPerRun       : Integer;
+        // Per processed file
+        avgTokensPerFile         : Integer;
+        // Last finished run
+        lastRunAt                : Timestamp;
+        lastRunDurationMs        : Integer;
+        lastRunTokens            : Integer;
+        lastRunOpenItems         : Integer;
         activeModel              : String(80);
     };
 
@@ -188,7 +169,7 @@ service CashSyncService {
             ProposedMatches,
             OpenItem,
             MatchResult,
-            AiAnalytics
+            PipelineRuns
         ]
     }
     action uploadPayment(fileName: String, fileContent: LargeBinary) returns Payments;
@@ -205,7 +186,7 @@ service CashSyncService {
             IngestionLog,
             OpenItem,
             MatchResult,
-            AiAnalytics
+            PipelineRuns
         ]
     }
     action syncMailbox() returns array of IngestionLog;
@@ -218,7 +199,7 @@ service CashSyncService {
             IngestionLog,
             OpenItem,
             MatchResult,
-            AiAnalytics
+            PipelineRuns
         ]
     }
     action revalidatePipeline() returns String;

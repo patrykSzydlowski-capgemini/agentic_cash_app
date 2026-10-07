@@ -303,31 +303,19 @@ test('revalidatePipeline executes 3-agent pipeline and returns summary', async (
     assert.match(result.value, /Pipeline revalidated/);
 });
 
-test('getAiStatistics returns aggregate token metrics, cost, CU, averages, and medians', async () => {
+test('getAiStatistics aggregates finished pipeline runs: tokens, cost, CU, durations, volumes', async () => {
     const stats = await get('/getAiStatistics()');
-    assert.ok(stats, 'Expected valid stats response');
-    assert.ok(typeof stats.totalPromptTokens === 'number', 'totalPromptTokens should be number');
-    assert.ok(typeof stats.totalCompletionTokens === 'number', 'totalCompletionTokens should be number');
-    assert.ok(typeof stats.totalTokens === 'number', 'totalTokens should be number');
-    assert.ok(stats.totalTokens > 0, 'totalTokens should be greater than 0');
-    assert.ok(typeof stats.totalCost === 'number', 'totalCost should be number');
-    assert.ok(stats.totalCost > 0, 'totalCost should be greater than 0');
-    assert.ok(typeof stats.totalCapacityUnits === 'number', 'totalCapacityUnits should be number');
-    assert.ok(stats.totalCapacityUnits > 0, 'totalCapacityUnits should be greater than 0');
-    assert.ok(typeof stats.totalProcessed === 'number', 'totalProcessed should be number');
-    assert.ok(stats.totalProcessed > 0, 'totalProcessed should be > 0');
-    // Averages (Means)
-    assert.ok(typeof stats.avgTokensPerPayment === 'number', 'avgTokensPerPayment should be number');
-    assert.ok(typeof stats.avgPromptTokens === 'number', 'avgPromptTokens should be number');
-    assert.ok(typeof stats.avgCompletionTokens === 'number', 'avgCompletionTokens should be number');
-    assert.ok(typeof stats.avgCost === 'number', 'avgCost should be number');
-    assert.ok(typeof stats.avgCapacityUnits === 'number', 'avgCapacityUnits should be number');
-    // Medians
-    assert.ok(typeof stats.medianTokensPerPayment === 'number', 'medianTokensPerPayment should be number');
-    assert.ok(typeof stats.medianPromptTokens === 'number', 'medianPromptTokens should be number');
-    assert.ok(typeof stats.medianCompletionTokens === 'number', 'medianCompletionTokens should be number');
-    assert.ok(typeof stats.medianCost === 'number', 'medianCost should be number');
-    assert.ok(typeof stats.medianCapacityUnits === 'number', 'medianCapacityUnits should be number');
+    assert.ok(stats.totalRuns >= 1, 'revalidation / reprocess runs above must be counted');
+    for (const field of ['failedRuns', 'totalPromptTokens', 'totalCompletionTokens', 'totalAiCalls', 'totalFilesExtracted',
+        'totalPaymentsEvaluated', 'totalPaymentsMatched', 'avgDurationMs', 'avgTokensPerRun', 'medianDurationMs',
+        'medianTokensPerRun', 'avgTokensPerFile', 'lastRunDurationMs', 'lastRunTokens', 'lastRunOpenItems']) {
+        assert.equal(typeof stats[field], 'number', `${field} should be a number`);
+    }
+    // Only real provider usage is counted; the test mock reports none, so totals must merely be consistent.
+    assert.equal(stats.totalTokens, stats.totalPromptTokens + stats.totalCompletionTokens);
+    assert.ok(Number(stats.totalCost) >= 0 && Number(stats.totalCapacityUnits) >= 0);
+    assert.ok(stats.totalPaymentsEvaluated > 0, 'matching agent evaluated payments');
+    assert.ok(stats.lastRunAt, 'lastRunAt should be set');
     assert.ok(stats.activeModel, 'activeModel should be set');
 });
 
@@ -351,15 +339,32 @@ test('reprocessWithAI keeps token metrics, estimated cost, and CU on payment', a
     assert.ok(typeof updated.processingTimeMs === 'number', 'processingTimeMs should be recorded');
 });
 
-test('AiAnalytics projection serves token usage, cost, and CU columns', async () => {
-    const response = await get('/AiAnalytics');
-    assert.ok(Array.isArray(response.value), 'Should return array of analytics records');
-    assert.ok(response.value.length > 0, 'Should have records');
-    const first = response.value[0];
-    assert.ok('totalTokens' in first, 'Should have totalTokens column');
-    assert.ok('estimatedCost' in first, 'Should have estimatedCost column');
-    assert.ok('capacityUnits' in first, 'Should have capacityUnits column');
-    assert.ok('aiModel' in first, 'Should have aiModel column');
+test('PipelineRuns: every run is recorded with trigger, status, duration, AI usage and volumes', async () => {
+    const runs = (await get('/PipelineRuns?$orderby=startedAt desc')).value;
+    const revalidation = runs.find((run: any) => run.trigger === 'revalidation');
+    assert.ok(revalidation, 'revalidatePipeline must create a run row');
+    assert.equal(revalidation.status, 'completed');
+    assert.equal(revalidation.statusText, 'Completed', 'enum value is shown with its localized title');
+    assert.equal(revalidation.triggerText, 'Revalidation');
+    assert.equal(typeof revalidation.durationMs, 'number');
+    assert.ok(revalidation.finishedAt, 'finishedAt should be set');
+    assert.ok(revalidation.openItemsOpen >= 5, 'open items considered by the run');
+    assert.ok(revalidation.paymentsEvaluated > 0, 'payments evaluated by Agent 3');
+    const reprocess = runs.find((run: any) => run.trigger === 'reprocess');
+    assert.ok(reprocess, 'reprocessWithAI must create a run row');
+    assert.equal(typeof reprocess.aiCalls, 'number', 'AI usage is attributed to the run');
+    assert.equal(reprocess.totalTokens, reprocess.promptTokens + reprocess.completionTokens);
+    // A deterministic exact match makes no AI call, so the model is named only when AI ran.
+    assert.equal(Boolean(reprocess.aiModel), reprocess.aiCalls > 0, 'aiModel is set exactly when AI was called');
+    const de = await (await fetch(`${base}/PipelineRuns(${revalidation.ID})?sap-locale=de`)).json();
+    assert.equal(de.triggerText, 'Neuvalidierung');
+});
+
+test('PipelineRuns are read-only over OData', async () => {
+    const response = await fetch(`${base}/PipelineRuns`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trigger: 'upload' }),
+    });
+    assert.ok(response.status >= 400 && response.status < 500, `expected 4xx, got ${response.status}`);
 });
 
 test('reprocessWithAI on unknown/uncertain payment keeps status needsReview and confidence <= 0.60', async () => {
@@ -427,4 +432,20 @@ test('Payments with status posted/cleared have StatusCriticality 5 (Blue), Confi
             assert.equal(p.statusText, 'Posted');
         }
     }
+});
+
+test('OpenItem DELETE is a soft delete: hidden from the service and the matching pool, S/4 data kept', async () => {
+    const id = '9123456999';
+    const patched = await fetch(`${base}/OpenItem('${id}')`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ CustomerName: 'X' }),
+    });
+    assert.equal(patched.status, 405, 'open items are never edited from the UI');
+    const deleted = await fetch(`${base}/OpenItem('${id}')`, { method: 'DELETE' });
+    assert.equal(deleted.status, 204, await deleted.clone().text());
+    const missing = await fetch(`${base}/OpenItem('${id}')`);
+    assert.equal(missing.status, 404);
+    const items = (await get('/OpenItem')).value;
+    assert.ok(!items.some((i: any) => i.OpenItemId === id), 'dismissed item is hidden from the list');
+    const again = await fetch(`${base}/OpenItem('${id}')`, { method: 'DELETE' });
+    assert.equal(again.status, 404);
 });

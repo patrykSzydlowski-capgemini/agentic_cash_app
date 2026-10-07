@@ -1,5 +1,5 @@
 import cds from '@sap/cds'
-import { INGESTION_PROCESSING_STATUS, OPEN_ITEM_CLEARING_STATUS, PROPOSED_MATCH_STATUS } from '#constants'
+import { INGESTION_PROCESSING_STATUS, OPEN_ITEM_CLEARING_STATUS, PIPELINE_RUN_STATUS, PROPOSED_MATCH_STATUS } from '#constants'
 
 /**
  * Enterprise Repository Pattern (inspired by DHL template):
@@ -25,6 +25,15 @@ export class PaymentsRepository {
 
     private get ingestionLog() {
         return cds.entities('poc.cashapp').IngestionLog
+    }
+
+    private get pipelineRuns() {
+        return cds.entities('poc.cashapp').PipelineRuns
+    }
+
+    /** Items the user has not deleted (soft delete flag `dismissed`). */
+    private activeOpenItems() {
+        return SELECT.from(this.openItems).where('dismissed is null or dismissed = false')
     }
 
     async findPaymentById(id: string) {
@@ -78,7 +87,7 @@ export class PaymentsRepository {
     }
 
     async findAllCachedOpenItems() {
-        return SELECT.from(this.openItems)
+        return this.activeOpenItems()
     }
 
     async insertCachedOpenItems(items: Array<Record<string, unknown>>) {
@@ -106,7 +115,21 @@ export class PaymentsRepository {
     }
 
     async findOpenItemsByStatus(status: string) {
-        return SELECT.from(this.openItems).where({ ClearingStatus: status })
+        return this.activeOpenItems().and({ ClearingStatus: status })
+    }
+
+    /**
+     * Soft delete from the UI: S/4HANA stays the source of truth, so the row is
+     * kept (the next UPSERT sync would re-create it) but hidden everywhere.
+     * Pending AI proposals for these items are dropped; human decisions stay.
+     */
+    async dismissOpenItems(openItemIds: string[]) {
+        if (!openItemIds || openItemIds.length === 0) return 0
+        await DELETE.from(this.proposedMatches)
+            .where({ openItemId: { in: openItemIds }, reviewStatus: PROPOSED_MATCH_STATUS.PENDING })
+        return UPDATE(this.openItems).set({ dismissed: true })
+            .where({ OpenItemId: { in: openItemIds } })
+            .and('dismissed is null or dismissed = false')
     }
 
     async updateOpenItemAssessment(openItemId: string, assessment: Record<string, unknown>) {
@@ -167,6 +190,18 @@ export class PaymentsRepository {
 
     async updateIngestionLog(id: string, changes: Record<string, unknown>) {
         return UPDATE.entity(this.ingestionLog, id).with(changes)
+    }
+
+    async insertPipelineRun(entry: Record<string, unknown>) {
+        return INSERT.into(this.pipelineRuns).entries(entry)
+    }
+
+    async updatePipelineRun(id: string, changes: Record<string, unknown>) {
+        return UPDATE.entity(this.pipelineRuns, id).with(changes)
+    }
+
+    async findFinishedPipelineRuns() {
+        return SELECT.from(this.pipelineRuns).where({ status: { '!=': PIPELINE_RUN_STATUS.RUNNING } }).orderBy('startedAt desc')
     }
 
     async findAllIngestionLogs(limit = 100) {

@@ -101,3 +101,21 @@ export const MATCH_STATUS = Object.freeze({
 } as const);
 
 export type MatchStatus = typeof MATCH_STATUS[keyof typeof MATCH_STATUS];
+
+export const PIPELINE_RUN_STATUS = Object.freeze({
+    RUNNING: 'running',
+    COMPLETED: 'completed',
+    FAILED: 'failed'
+} as const);
+
+export type PipelineRunStatus = typeof PIPELINE_RUN_STATUS[keyof typeof PIPELINE_RUN_STATUS];
+
+export const PIPELINE_RUN_TRIGGER = Object.freeze({
+    STARTUP: 'startup',
+    MAIL_SYNC: 'mailSync',
+    REVALIDATION: 'revalidation',
+    UPLOAD: 'upload',
+    REPROCESS: 'reprocess'
+} as const);
+
+export type PipelineRunTrigger = typeof PIPELINE_RUN_TRIGGER[keyof typeof PIPELINE_RUN_TRIGGER];
