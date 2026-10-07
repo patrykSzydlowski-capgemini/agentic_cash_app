@@ -9,6 +9,13 @@ annotate service.OpenItem with @(
     ],
     // Open items tab: why the AI is (not) sure the item is paid.
     UI.LineItem : [
+        // Toolbar button (bound, multi-select): each selected item is posted on its own.
+        {
+            $Type              : 'UI.DataFieldForAction',
+            Action             : 'CashSyncService.postOpenItem',
+            Label              : '{i18n>actionPostOpenItem}',
+            InvocationGrouping : #Isolated
+        },
         { $Type: 'UI.DataField', Value: OpenItemId,      Label: '{i18n>fieldOpenItemId}',      ![@HTML5.CssDefaults]: {width: '11rem'} },
         { $Type: 'UI.DataField', Value: CustomerName,    Label: '{i18n>fieldCustomerName}',    ![@HTML5.CssDefaults]: {width: '14rem'} },
         { $Type: 'UI.DataField', Value: CompanyCode,     Label: '{i18n>fieldCompanyCode}',     ![@HTML5.CssDefaults]: {width: '7rem'} },

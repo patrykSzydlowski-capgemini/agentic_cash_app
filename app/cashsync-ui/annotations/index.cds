@@ -27,6 +27,7 @@ using from './openitems/entity';
 using from './openitems/fields';
 using from './openitems/list';
 using from './openitems/page';
+using from './openitems/actions';
 
 using from './ingestion/entity';
 using from './ingestion/fields';
