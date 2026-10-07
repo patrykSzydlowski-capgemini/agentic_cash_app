@@ -1,4 +1,5 @@
 import cds from '@sap/cds'
+import { INGESTION_PROCESSING_STATUS, OPEN_ITEM_CLEARING_STATUS, PROPOSED_MATCH_STATUS } from '#constants'
 
 /**
  * Enterprise Repository Pattern (inspired by DHL template):
@@ -85,6 +86,53 @@ export class PaymentsRepository {
         return INSERT.into(this.openItems).entries(items)
     }
 
+    /** PATCH-style sync (capire UPSERT): only S/4 fields are written, AI assessment columns survive. */
+    async upsertOpenItems(items: Array<Record<string, unknown>>) {
+        if (!items || items.length === 0) return
+        return UPSERT.into(this.openItems).entries(items)
+    }
+
+    /** Drops cached items S/4HANA no longer returns (archived / reversed documents). */
+    async deleteOpenItemsNotIn(openItemIds: string[]) {
+        if (openItemIds.length === 0) return DELETE.from(this.openItems)
+        return DELETE.from(this.openItems).where({ OpenItemId: { 'not in': openItemIds } })
+    }
+
+    async markOpenItemsCleared(openItemIds: string[]) {
+        if (!openItemIds || openItemIds.length === 0) return
+        return UPDATE(this.openItems)
+            .set({ ClearingStatus: OPEN_ITEM_CLEARING_STATUS.CLEARED })
+            .where({ OpenItemId: { in: openItemIds } })
+    }
+
+    async findOpenItemsByStatus(status: string) {
+        return SELECT.from(this.openItems).where({ ClearingStatus: status })
+    }
+
+    async updateOpenItemAssessment(openItemId: string, assessment: Record<string, unknown>) {
+        return UPDATE.entity(this.openItems, openItemId).with(assessment)
+    }
+
+    async findAllProposedMatches() {
+        return SELECT.from(this.proposedMatches)
+    }
+
+    async findRejectedMatchesByPaymentId(paymentId: string) {
+        return SELECT.from(this.proposedMatches)
+            .where({ payment_ID: paymentId, reviewStatus: PROPOSED_MATCH_STATUS.REJECTED })
+    }
+
+    /**
+     * Removes matches Agent 3 may recompute: pending proposals and legacy
+     * placeholder rows without an open item. Approved (failed posting),
+     * rejected and posted rows are human decisions and stay untouched.
+     */
+    async deleteReplaceableMatchesByPaymentId(paymentId: string) {
+        await DELETE.from(this.proposedMatches).where({ payment_ID: paymentId, reviewStatus: PROPOSED_MATCH_STATUS.PENDING })
+        await DELETE.from(this.proposedMatches).where({ payment_ID: paymentId, openItemId: null })
+        await DELETE.from(this.proposedMatches).where({ payment_ID: paymentId, openItemId: '' })
+    }
+
     async insertMatchResult(entry: Record<string, unknown>) {
         return INSERT.into(this.matchResults).entries(entry)
     }
@@ -101,6 +149,24 @@ export class PaymentsRepository {
 
     async findIngestionLogsByPaymentId(paymentId: string) {
         return SELECT.from(this.ingestionLog).where({ payment_ID: paymentId }).orderBy('timestamp desc')
+    }
+
+    async findPendingIngestionLogs() {
+        return SELECT.from(this.ingestionLog)
+            .columns('*', 'attachmentContent')
+            .where({ processingStatus: INGESTION_PROCESSING_STATUS.RECEIVED })
+            .orderBy('timestamp asc')
+    }
+
+    async findFailedIngestionLogs() {
+        return SELECT.from(this.ingestionLog)
+            .columns('*', 'attachmentContent')
+            .where({ processingStatus: INGESTION_PROCESSING_STATUS.FAILED })
+            .orderBy('timestamp asc')
+    }
+
+    async updateIngestionLog(id: string, changes: Record<string, unknown>) {
+        return UPDATE.entity(this.ingestionLog, id).with(changes)
     }
 
     async findAllIngestionLogs(limit = 100) {

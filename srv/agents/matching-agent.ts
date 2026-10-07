@@ -30,11 +30,11 @@ export interface ProposedMatchCandidate {
   rationale: string;
 }
 
-function amountsEqual(a: number, b: number): boolean {
+export function amountsEqual(a: number, b: number): boolean {
   return Math.round(a * 100) === Math.round(b * 100);
 }
 
-function referencesContainId(references: string[], openItemId: string): boolean {
+export function referencesContainId(references: string[], openItemId: string): boolean {
   if (!openItemId.trim()) return false;
   const needle = openItemId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const token = new RegExp(`(^|[^a-z0-9_-])${needle}($|[^a-z0-9_-])`, 'i');

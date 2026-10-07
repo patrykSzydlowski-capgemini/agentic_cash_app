@@ -16,9 +16,11 @@ export type ClientFactory = () => Promise<{
 
 export function orchestrationConfig() {
     const destinationName = process.env.AICORE_DESTINATION?.trim()
+    const deploymentId = process.env.AICORE_DEPLOYMENT_ID?.trim()
     return {
         model: process.env.AICORE_MODEL ?? 'anthropic--claude-4.5-sonnet',
         resourceGroup: process.env.AICORE_RESOURCE_GROUP ?? 'default',
+        ...(deploymentId ? { deploymentId } : {}),
         ...(destinationName ? { destinationName } : {}),
     }
 }
@@ -29,9 +31,14 @@ const createClient: ClientFactory = async () => {
     const destination = config.destinationName
         ? { destinationName: config.destinationName }
         : undefined
+    const deploymentId = config.deploymentId || (process.env.CASH_AI_PROVIDER === 'aicore' || !process.env.CASH_AI_PROVIDER ? 'd0fb4c15c05a7ab0' : undefined)
+    const deploymentConfig: { resourceGroup: string; deploymentId?: string } = {
+        resourceGroup: config.resourceGroup,
+        ...(deploymentId ? { deploymentId } : {}),
+    }
     return new OrchestrationClient(
         { promptTemplating: { model: { name: config.model } } },
-        { resourceGroup: config.resourceGroup },
+        deploymentConfig,
         destination,
     )
 }
@@ -48,9 +55,14 @@ async function completeWithUsage(messages: Message[], factory: ClientFactory): P
             try {
                 const { OrchestrationClient } = await import('@sap-ai-sdk/orchestration')
                 const config = orchestrationConfig()
+                const deploymentId = config.deploymentId || (process.env.CASH_AI_PROVIDER === 'aicore' || !process.env.CASH_AI_PROVIDER ? 'd0fb4c15c05a7ab0' : undefined)
+                const deploymentConfig: { resourceGroup: string; deploymentId?: string } = {
+                    resourceGroup: config.resourceGroup,
+                    ...(deploymentId ? { deploymentId } : {}),
+                }
                 const directClient = new OrchestrationClient(
                     { promptTemplating: { model: { name: config.model } } },
-                    { resourceGroup: config.resourceGroup },
+                    deploymentConfig,
                 )
                 response = await directClient.chatCompletion({ messages })
             } catch {
@@ -58,7 +70,7 @@ async function completeWithUsage(messages: Message[], factory: ClientFactory): P
                 throw new Error(`SAP orchestration request failed${dest}. Check destination, binding, model, resource group and quota.`)
             }
         } else {
-            throw new Error(`SAP orchestration request failed. Check destination, binding, model, resource group and quota.`)
+            throw new Error('SAP orchestration request failed. Check destination, binding, model, resource group and quota.')
         }
     }
     const content = typeof response.getContent === 'function' ? response.getContent() : response?.content

@@ -5,7 +5,23 @@ using { poc.cashapp as app } from '../db/payments';
 
 service CashSyncService {
 
-    entity OpenItem as projection on my.OpenItem;
+    // Local-first cache of S/4HANA open items (open + cleared), synced at startup / revalidation.
+    // AI assessment fields are written by Agent 3 of the pipeline only.
+    @readonly
+    entity OpenItem as projection on my.OpenItem {
+        *,
+        case
+            when ClearingStatus = 'CLEARED' then 5
+            when aiConfidence >= 0.85 then 3
+            when aiConfidence >= 0.40 then 2
+            else 1
+        end as ConfidenceCriticality : Integer,
+        case ClearingStatus
+            when 'CLEARED' then 5
+            when 'OPEN'    then 2
+            else 0
+        end as ClearingCriticality : Integer
+    };
 
     @cds.odata.expand: [ 'open_item' ]
     entity MatchResult as projection on my.MatchResult {
@@ -29,12 +45,27 @@ service CashSyncService {
     entity Payments as projection on app.Payments {
         *,
         case status
+            when 'posted'      then 5
+            when 'cleared'     then 5
             when 'matched'     then 3
             when 'extracted'   then 2
             when 'needsReview' then 2
-            when 'cleared'     then 3
             else 0
-        end as StatusCriticality : Integer
+        end as StatusCriticality : Integer,
+        case status
+            when 'matched'     then 'Matched'
+            when 'needsReview' then 'Pending Review'
+            when 'cleared'     then 'Posted'
+            when 'posted'      then 'Posted'
+            when 'extracted'   then 'Extracted'
+            when 'failed'      then 'Failed'
+            else status
+        end as statusText : String,
+        case
+            when status = 'posted' or status = 'cleared' then 5
+            when extractionConfidence >= 0.80 then 3
+            else 2
+        end as ConfidenceCriticality : Integer
     } actions {
         action reprocessWithAI() returns Payments;
         action postToS4()         returns Payments;
@@ -42,8 +73,8 @@ service CashSyncService {
     entity ProposedMatches as projection on app.ProposedMatches {
         *,
         case reviewStatus
-            when 'posted'   then 3
-            when 'approved' then 2
+            when 'posted'   then 5
+            when 'approved' then 3
             when 'pending'  then 2
             when 'rejected' then 1
             else 0
@@ -54,6 +85,12 @@ service CashSyncService {
     };
     @readonly entity IngestionLog    as projection on app.IngestionLog {
         *,
+        case processingStatus
+            when 'extracted' then 3
+            when 'received'  then 2
+            when 'failed'    then 1
+            else 0
+        end as ProcessingCriticality : Integer,
         case classificationDecision
             when 'relevant'    then 3
             when 'needsReview' then 2
@@ -80,12 +117,27 @@ service CashSyncService {
         aiModel,
         processingTimeMs,
         case status
+            when 'posted'      then 5
+            when 'cleared'     then 5
             when 'matched'     then 3
             when 'extracted'   then 2
             when 'needsReview' then 2
-            when 'cleared'     then 3
             else 0
-        end as StatusCriticality : Integer
+        end as StatusCriticality : Integer,
+        case status
+            when 'matched'     then 'Matched'
+            when 'needsReview' then 'Pending Review'
+            when 'cleared'     then 'Posted'
+            when 'posted'      then 'Posted'
+            when 'extracted'   then 'Extracted'
+            when 'failed'      then 'Failed'
+            else status
+        end as statusText : String,
+        case
+            when status = 'posted' or status = 'cleared' then 5
+            when extractionConfidence >= 0.80 then 3
+            else 2
+        end as ConfidenceCriticality : Integer
     };
 
     type AiStatisticsRecord {
@@ -134,6 +186,7 @@ service CashSyncService {
         TargetEntities: [
             Payments,
             ProposedMatches,
+            OpenItem,
             MatchResult,
             AiAnalytics
         ]
@@ -144,17 +197,31 @@ service CashSyncService {
     action processPaymentDocument(pdfBase64: LargeString) returns String;
 
 
-    // Mailbox Ingestion: Agent 1 reads AR mailbox -> Agent 2 extracts -> Agent 3 matches
+    // Incremental pipeline run: Agent 1 downloads new PDF mails -> Agent 2 extracts -> Agent 3 matches + assesses open items
     @Common.SideEffects: {
         TargetEntities: [
             Payments,
             ProposedMatches,
             IngestionLog,
+            OpenItem,
             MatchResult,
             AiAnalytics
         ]
     }
     action syncMailbox() returns array of IngestionLog;
+
+    // Full pipeline run: sync S/4 OpenItems -> Agent 1 -> Agent 2 (incl. failed mails) -> Agent 3 for all unposted payments
+    @Common.SideEffects: {
+        TargetEntities: [
+            Payments,
+            ProposedMatches,
+            IngestionLog,
+            OpenItem,
+            MatchResult,
+            AiAnalytics
+        ]
+    }
+    action revalidatePipeline() returns String;
 
     action ingestAgentMatch(
         match_id: String,

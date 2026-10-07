@@ -262,3 +262,29 @@ test('ExtractedPaymentSchema supports capacityUnits, rationale, and usage metada
   }
 });
 
+test('searchMailboxContext finds matching message by invoice reference or payer', async () => {
+  const { searchMailboxContext } = await import('../srv/connectors/mailbox-client.js');
+  const result = await searchMailboxContext({
+    payer: 'ACME Corp',
+    references: ['OP-1001'],
+    amount: 12500,
+  });
+
+  assert.equal(typeof result.hasMatches, 'boolean');
+  assert.equal(typeof result.summary, 'string');
+  assert.ok(Array.isArray(result.matchedMessages));
+});
+
+test('searchMailboxContext handles queries with no matching messages gracefully', async () => {
+  const { searchMailboxContext } = await import('../srv/connectors/mailbox-client.js');
+  const result = await searchMailboxContext({
+    payer: 'Completely Unknown Entity 9999XYZ',
+    references: ['NONEXISTENT-9999'],
+    amount: 9999999.99,
+  });
+
+  assert.equal(result.hasMatches, false);
+  assert.equal(result.matchedMessages.length, 0);
+  assert.match(result.summary, /Brak|pominięta/);
+});
+

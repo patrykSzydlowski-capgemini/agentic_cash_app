@@ -21,10 +21,21 @@ before(async () => {
         await cp('gen/srv', project, { recursive: true });
         // Test fixtures only; production artifacts do not need demo data.
         await cp('db/data', resolve(project, 'db/data'), { recursive: true });
+        await cp('test/fixtures/data', resolve(project, 'test/fixtures/data'), { recursive: true });
+        await cp('test-fixtures', resolve(project, 'test-fixtures'), { recursive: true });
     }
     const env: NodeJS.ProcessEnv = { ...process.env };
     delete env.CASH_AI_ENABLED;
     delete env.CASH_S4_ENABLED;
+    // Never reach the live S/4 tenant from tests: an unknown destination makes
+    // every S/4 call fail (open items fall back to the SQLite cache, posting -> 502).
+    env.S4_DESTINATION_NAME = '__cash_sync_test_no_s4__';
+    env.MAILBOX_USE_MOCK = 'true';
+    env.AGENT_PIPELINE_ON_STARTUP = 'false';
+    // Payment fixtures live outside db/data and test/data, so `cds watch` never shows demo payments.
+    // `--in-memory` rebuilds requires.db from requires.kinds.sqlite, so both need the folder list.
+    const data = ['db/data', 'test/fixtures/data'];
+    env.CDS_CONFIG = JSON.stringify({ requires: { db: { data }, kinds: { sqlite: { data } } } });
     if (compiled) delete env.CDS_TYPESCRIPT;
     else env.CDS_TYPESCRIPT = 'true';
     server = spawn(process.execPath, [
@@ -87,8 +98,10 @@ test('OData metadata properly localizes annotations into Polish, German, and Eng
     assert.equal(plRes.status, 200);
     const plMeta = await plRes.text();
     assert.ok(plMeta.includes('Analityka wykonania AI i alokacja zasobów'), 'PL should localize facetAiAnalytics');
+    assert.ok(plMeta.includes('Pozycje rozliczone (zaksięgowane)'), 'PL should localize tabClosedItems');
     assert.ok(!plMeta.includes('String="facetAiAnalytics"'), 'PL should not contain raw facetAiAnalytics');
     assert.ok(!plMeta.includes('{i18n>facetAiAnalytics}'), 'PL should not contain unparsed {i18n>facetAiAnalytics}');
+    assert.ok(!plMeta.includes('{i18n>tabClosedItems}'), 'PL should not contain unparsed {i18n>tabClosedItems}');
 
     // German
     const deRes = await fetch(base + '/$metadata?sap-locale=de', {
@@ -97,7 +110,9 @@ test('OData metadata properly localizes annotations into Polish, German, and Eng
     assert.equal(deRes.status, 200);
     const deMeta = await deRes.text();
     assert.ok(deMeta.includes('KI-Ausführungsanalytik &amp; Ressourcenkosten'), 'DE should localize facetAiAnalytics');
+    assert.ok(deMeta.includes('Ausgeglichene Posten (gebucht)'), 'DE should localize tabClosedItems');
     assert.ok(!deMeta.includes('String="facetAiAnalytics"'), 'DE should not contain raw facetAiAnalytics');
+    assert.ok(!deMeta.includes('{i18n>tabClosedItems}'), 'DE should not contain unparsed {i18n>tabClosedItems}');
 
     // English (default)
     const enRes = await fetch(base + '/$metadata?sap-locale=en', {
@@ -106,7 +121,9 @@ test('OData metadata properly localizes annotations into Polish, German, and Eng
     assert.equal(enRes.status, 200);
     const enMeta = await enRes.text();
     assert.ok(enMeta.includes('AI Execution Analytics &amp; Resource Costs'), 'EN should localize facetAiAnalytics');
+    assert.ok(enMeta.includes('Closed Items (Posted)'), 'EN should localize tabClosedItems');
     assert.ok(!enMeta.includes('String="facetAiAnalytics"'), 'EN should not contain raw facetAiAnalytics');
+    assert.ok(!enMeta.includes('{i18n>tabClosedItems}'), 'EN should not contain unparsed {i18n>tabClosedItems}');
 });
 
 test('triggerAIAgent updates the selected match and returns notification', async () => {
@@ -146,19 +163,22 @@ for (const confidence of [0.81, 0.8, 0.79]) {
     });
 }
 
-test('processPaymentDocument routes zero-confidence mock extraction to needsReview without matches', async () => {
+// Tests have no AI binding: Agent 2 either gets the zero-confidence mock (needsReview)
+// or a failed live call (failed). Both must skip Agent 3 and store no candidates.
+const UNUSABLE_EXTRACTION = ['needsReview', 'failed'];
+
+test('processPaymentDocument routes an unusable extraction to review without matches', async () => {
     const paymentsBefore = (await get('/Payments')).value.length;
     const response = await post('/processPaymentDocument', { pdfBase64: Buffer.from('unused').toString('base64') });
-    assert.match((await response.json()).value, /Stored 0 proposed match/);
+    const text = (await response.json()).value;
+    assert.match(text, /Stored 0 proposed match/);
 
     const payments = (await get('/Payments')).value;
     assert.equal(payments.length, paymentsBefore + 1);
-    const payment = payments.filter((p: any) => String(p.payer).includes('[MOCK]')).at(-1);
-    assert.ok(payment, 'expected a mock payment row');
+    const payment = payments.find((p: any) => text.includes(p.ID));
+    assert.ok(payment, 'expected the new payment row');
     assert.equal(Number(payment.extractionConfidence), 0);
-    // Mock confidence 0 < LOW_CONFIDENCE_THRESHOLD (0.6): matching is skipped,
-    // the payment goes straight to needsReview with no candidates persisted.
-    assert.equal(payment.status, 'needsReview');
+    assert.ok(UNUSABLE_EXTRACTION.includes(payment.status), payment.status);
 
     const matches = await get(`/Payments('${payment.ID}')/matches`);
     assert.equal(matches.value.length, 0);
@@ -172,16 +192,15 @@ async function postRaw(path: string, payload: object) {
     });
 }
 
-test('uploadPayment stores the payment on fixture data (mock confidence routes to needsReview)', async () => {
+test('uploadPayment stores the payment even when extraction is unusable', async () => {
     const paymentsBefore = (await get('/Payments')).value.length;
     const response = await post('/uploadPayment', {
         fileName: 'mock-remittance.pdf',
         fileContent: Buffer.from('unused').toString('base64'),
     });
     const stored = await response.json();
-    assert.match(stored.payer, /MOCK|Test payer/);
-    // Mock extraction confidence 0 < 0.6: matching skipped, no candidates.
-    assert.equal(stored.status, 'needsReview');
+    assert.equal(stored.fileName, 'mock-remittance.pdf');
+    assert.ok(UNUSABLE_EXTRACTION.includes(stored.status), stored.status);
 
     const payments = (await get('/Payments')).value;
     assert.equal(payments.length, paymentsBefore + 1);
@@ -226,7 +245,20 @@ test('reprocessWithAI triggers matching agent on selected payment and updates st
     const updated = await response.json();
     assert.equal(updated.ID, id);
     assert.equal(updated.status, 'matched');
-    assert.ok(Number(updated.extractionConfidence) >= 0.95);
+    // Agent 3 never overwrites the extraction confidence of Agent 2.
+    assert.equal(Number(updated.extractionConfidence), 0.92);
+
+    // Reference + amount + currency + company name all agree -> deterministic 100 %.
+    const matches = (await get(`/Payments('${id}')/matches`)).value;
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].openItemId, 'OP-1001');
+    assert.equal(Number(matches[0].matchScore), 1);
+    assert.equal(matches[0].matchStatus, 'full');
+
+    const item = await get(`/OpenItem('OP-1001')`);
+    assert.equal(Number(item.aiConfidence), 1);
+    assert.equal(item.aiMatchStatus, 'full');
+    assert.match(item.aiRationale, /ACME Corp/);
 });
 
 test('postToS4 rejects payment with no matching open item (400)', async () => {
@@ -257,10 +289,18 @@ test('reprocessWithAI preserves multiple match candidates for multi-invoice paym
     assert.deepEqual(itemIds, ['OP-1003', 'OP-1004']);
 });
 
-test('postToS4 on multi-invoice payment triggers clearing in S/4HANA', async () => {
+test('postToS4 on multi-invoice payment attempts clearing (test destination unreachable -> 502 or guarded 400)', async () => {
     const id = '00000001-0000-0000-0000-000000000004';
     const response = await postRaw(`/Payments('${id}')/CashSyncService.postToS4`, {});
-    assert.ok([200, 502].includes(response.status));
+    assert.ok([200, 400, 502].includes(response.status), String(response.status));
+});
+
+test('revalidatePipeline executes 3-agent pipeline and returns summary', async () => {
+    const response = await post('/revalidatePipeline', {});
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.ok(typeof result.value === 'string');
+    assert.match(result.value, /Pipeline revalidated/);
 });
 
 test('getAiStatistics returns aggregate token metrics, cost, CU, averages, and medians', async () => {
@@ -291,8 +331,14 @@ test('getAiStatistics returns aggregate token metrics, cost, CU, averages, and m
     assert.ok(stats.activeModel, 'activeModel should be set');
 });
 
-test('reprocessWithAI updates token metrics, estimated cost, and CU on payment', async () => {
+test('reprocessWithAI refuses payments that are already posted', async () => {
     const id = '00000001-0000-0000-0000-000000000001';
+    const response = await postRaw(`/Payments('${id}')/CashSyncService.reprocessWithAI`, {});
+    assert.equal(response.status, 400);
+});
+
+test('reprocessWithAI keeps token metrics, estimated cost, and CU on payment', async () => {
+    const id = '00000001-0000-0000-0000-000000000002';
     const response = await post(`/Payments('${id}')/CashSyncService.reprocessWithAI`, {});
     assert.equal(response.status, 200);
     const updated = await response.json();
@@ -326,6 +372,37 @@ test('reprocessWithAI on unknown/uncertain payment keeps status needsReview and 
     assert.ok(Number(updated.extractionConfidence) <= 0.60, 'Confidence must be capped at <= 0.60');
 });
 
+test('open items: S/4 cache serves OPEN items with an AI paid-assessment, unmatched items score 0', async () => {
+    const items = (await get(`/OpenItem?$filter=ClearingStatus eq 'OPEN'`)).value;
+    assert.ok(items.length >= 5);
+    const unpaid = items.find((i: any) => i.OpenItemId === '9123456999');
+    assert.ok(unpaid, 'Garfild item expected in seed');
+    assert.equal(Number(unpaid.aiConfidence ?? 0), 0);
+});
+
+test('syncMailbox (Agent 1) stores only new PDF mails and is idempotent', async () => {
+    // revalidatePipeline above may already have run Agent 1, so check the stored state.
+    const first = await post('/syncMailbox', {});
+    assert.ok(Array.isArray((await first.json()).value));
+
+    const logs = (await get('/IngestionLog')).value;
+    const mockIds = [
+        '<remittance-inv-9123456799@friends-foes.com>',
+        '<partial-remittance-9123456999@garfild.com>',
+        '<marketing-advice-999@apex-consulting.org>',
+    ];
+    for (const id of mockIds) {
+        const stored = logs.filter((l: any) => l.messageId === id);
+        assert.equal(stored.length, 1, `mail ${id} stored exactly once`);
+        assert.match(String(stored[0].filename), /\.pdf$/i);
+        assert.notEqual(stored[0].processingStatus, 'received', 'Agent 2 must process every received mail');
+        assert.ok(stored[0].payment_ID, 'Agent 2 links the mail to a payment');
+    }
+
+    const second = await post('/syncMailbox', {});
+    assert.equal((await second.json()).value.length, 0, 'already stored mails are not downloaded again');
+});
+
 test('health probe: /health/live returns 200 UP', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/health/live`);
     assert.equal(res.status, 200);
@@ -340,5 +417,14 @@ test('health probe: /health/ready returns 200 UP with dependency details', async
     assert.equal(data.status, 'UP');
     assert.equal(data.checks.database, true);
 });
-
-
+test('Payments with status posted/cleared have StatusCriticality 5 (Blue), ConfidenceCriticality 5 (Blue) and statusText Posted', async () => {
+    const res = await get('/Payments');
+    assert.ok(Array.isArray(res.value));
+    for (const p of res.value) {
+        if (p.status === 'posted' || p.status === 'cleared') {
+            assert.equal(p.StatusCriticality, 5, 'StatusCriticality must be 5 (Blue / Information) for posted payments');
+            assert.equal(p.ConfidenceCriticality, 5, 'ConfidenceCriticality must be 5 (Blue / Information) for posted payments');
+            assert.equal(p.statusText, 'Posted');
+        }
+    }
+});

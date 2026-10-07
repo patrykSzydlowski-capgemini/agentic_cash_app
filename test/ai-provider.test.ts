@@ -72,3 +72,13 @@ test('SAP orchestration adapter supports AICORE_DESTINATION', () => {
         destinationName: 'SAP_AI_CORE_DEST',
     })
 })
+
+test('SAP orchestration adapter supports AICORE_DEPLOYMENT_ID', () => {
+    process.env.AICORE_DEPLOYMENT_ID = 'custom-deployment-id'
+    assert.deepEqual(orchestrationConfig(), {
+        model: 'anthropic--claude-4.5-sonnet',
+        resourceGroup: 'default',
+        deploymentId: 'custom-deployment-id',
+    })
+})
+

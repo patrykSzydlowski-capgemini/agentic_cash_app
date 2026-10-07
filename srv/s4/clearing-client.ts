@@ -37,14 +37,34 @@ interface PostingRecord {
 export type HttpPost = (url: string, body: unknown) => Promise<unknown>
 
 async function defaultHttpPost(url: string, body: unknown): Promise<unknown> {
+    if (!process.env.VCAP_SERVICES) {
+        try {
+            // @ts-ignore
+            const xsenv = (await import('@sap/xsenv')).default
+            xsenv.loadEnv()
+        } catch { /* ignore if default-env.json missing */ }
+    }
     const { executeHttpRequest } = await import('@sap-cloud-sdk/http-client')
     const cdsS4 = (global as any).cds?.env?.requires?.s4
     const destinationName = process.env.S4_DESTINATION_NAME ?? cdsS4?.credentials?.destination ?? 'HD0_BAS'
-    const response = await executeHttpRequest(
-        { destinationName },
-        { method: 'post', url, headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, data: body, timeout: 30000 },
-    )
-    return response.data
+    try {
+        const response = await executeHttpRequest(
+            { destinationName },
+            { method: 'post', url, headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, data: body, timeout: 30000 },
+        )
+        return response.data
+    } catch (err: any) {
+        const errorData = err.response?.data?.error || err.cause?.response?.data?.error
+        if (errorData) {
+            const msg = typeof errorData.message === 'string' ? errorData.message : errorData.message?.value || JSON.stringify(errorData.message)
+            const code = errorData.code ? `[${errorData.code}] ` : ''
+            const detail = `${code}${msg}`
+            const enhancedErr = new Error(detail)
+            ;(enhancedErr as any).response = err.response || err.cause?.response
+            throw enhancedErr
+        }
+        throw err
+    }
 }
 
 export async function postClearing(

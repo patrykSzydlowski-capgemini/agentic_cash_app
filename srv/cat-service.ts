@@ -1,28 +1,42 @@
 import cds from '@sap/cds'
 import type { Request } from '@sap/cds'
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { ingestAgentMatch, processPaymentDocument } from '../@cds-models/CashSyncService/index.js'
 import { extractPayment } from './agents/extraction-agent.js'
-import type { ExtractedPayment } from './agents/extraction-agent.js'
-import { proposeMatches } from './agents/matching-agent.js'
-import type { ProposedMatchCandidate } from './agents/matching-agent.js'
-import { classifyMailboxItems } from './agents/ingestion-agent.js'
-import { listUnreadMailboxMessages } from './connectors/mailbox-client.js'
-import type { OpenItem } from './s4/open-items-client.js'
+import {
+    aggregateOpenItemAssessment,
+    allocatePaymentAmount,
+    applyScoreGuardrails,
+    buildMatchingPrompt,
+    checkExactMatch,
+    heuristicFallbackScores,
+    parseAiMatchingResponse,
+    selectAiCandidates,
+    toCandidate,
+} from './agents/open-item-assessment.js'
+import type {
+    AiMatchingResponse,
+    AssessableOpenItem,
+    AssessablePayment,
+    OpenItemMatchEvidence,
+    ScoredCandidate,
+} from './agents/open-item-assessment.js'
+import { fetchNewPdfMailboxMessages } from './connectors/mailbox-client.js'
 import { getOpenItems as getLiveOpenItems } from './s4/open-items-client.js'
 import { postClearing, type SapMessage, type ClearingResult } from './s4/clearing-client.js'
-import { activeModelName, calculateTokenCost, calculateCapacityUnits, generateTextWithUsage } from './genai/index.js'
+import { activeModelName, calculateTokenCost, calculateCapacityUnits } from './genai/index.js'
+import type { TokenUsage } from './genai/index.js'
 import {
     PAYMENT_STATUS,
     PROPOSED_MATCH_STATUS,
     MATCH_RESULT_STATUS,
     REVIEW_STATUS,
-    CRITICALITY,
     CONFIDENCE_THRESHOLDS,
     INGESTION_SOURCE,
-    CLASSIFICATION_DECISION
+    CLASSIFICATION_DECISION,
+    INGESTION_PROCESSING_STATUS,
+    OPEN_ITEM_CLEARING_STATUS,
+    MATCH_STATUS,
 } from './constants/index.js'
 import { ApplicationError } from './core/errors/ApplicationError.js'
 import { paymentsRepository } from './repository/index.js'
@@ -32,18 +46,11 @@ import { paymentsRepository } from './repository/index.js'
 // 0.6 mirrors the reference ts-agentic-poc policy; revisit with usage data.
 export const LOW_CONFIDENCE_THRESHOLD = CONFIDENCE_THRESHOLDS.LOW
 
-const { INSERT, UPDATE, SELECT, UPSERT } = cds.ql
+const { INSERT, UPDATE, SELECT } = cds.ql
 const LOG = cds.log('cash-service')
 type ProcessPaymentDocumentPayload = Parameters<typeof processPaymentDocument>[0]
 type IngestAgentMatchPayload = Parameters<typeof ingestAgentMatch>[0]
 
-
-interface PipelineResult {
-    payment: ExtractedPayment
-    candidates: ProposedMatchCandidate[]
-    openItems: OpenItem[]
-    rawExtractionConfidence: number
-}
 
 export default class CashSyncServiceImpl extends cds.ApplicationService {
     async init() {
@@ -86,28 +93,6 @@ export default class CashSyncServiceImpl extends cds.ApplicationService {
             }
             return `openrouter [model: ${model}]`
         }
-
-        // Live S/4HANA Read handler for OpenItem entity in Fiori UI
-        this.on('READ', 'OpenItem', async (req: Request, next: Function) => {
-            try {
-                const liveItems = await getLiveOpenItems()
-                LOG.info(`[OpenItem READ] Returning ${liveItems.length} live item(s) from S/4HANA`)
-                return liveItems.map(item => ({
-                    OpenItemId: item.openItemId,
-                    CompanyCode: item.companyCode,
-                    CustomerAccount: item.customerAccount,
-                    CustomerName: item.customerName,
-                    InvoiceAmount: item.invoiceAmount,
-                    InvoiceAmountCurr: item.invoiceAmountCurrency,
-                    ClearingStatus: item.clearingStatus,
-                    PostingDate: item.postingDate,
-                    DocumentDate: item.documentDate,
-                }))
-            } catch (err) {
-                LOG.warn(`[OpenItem READ] Failed to fetch from S/4HANA, falling back to SQLite: ${(err as Error).message}`)
-                return next()
-            }
-        })
 
         // 1. AI re-validation for a specific MatchResult row (real AI agent)
         this.on('triggerAIAgent', 'MatchResult', async (req: Request) => {
@@ -257,365 +242,482 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             return 'Match stored successfully'
         })
 
-        // 4. Local-first pipeline: extraction -> matching -> persistence.
-        // SAP AI Hub (orchestration) by default, optional OpenRouter via CASH_AI_PROVIDER.
-        // Disabled AI uses explicit local mocks, never fallback after a live error.
-        const loadOpenItems = async (): Promise<OpenItem[]> => {
-            LOG.info(`[ERP Open Items] Synchronizing open items with Live S/4HANA...`)
+        // 4. Three-agent pipeline (shared by startup, syncMailbox, revalidatePipeline,
+        // uploads and reprocessWithAI):
+        //   Step 0  S/4HANA  — all open AND cleared open items are UPSERTed into the
+        //                      local cache (AI assessment columns survive the sync).
+        //   Agent 1 Mail     — downloads only new mails that carry a PDF.
+        //   Agent 2 Extract  — PDF + subject/sender -> one Payments row per PDF.
+        //   Agent 3 Match    — deterministic 100 % check, otherwise AI score 0–99 %,
+        //                      then every OPEN item gets an aggregated "is it paid" assessment.
+        // Payments come only from mails/uploads; S/4 is read for open items and
+        // written only when an operator posts an approved clearing.
+        const toAssessableOpenItem = (row: Record<string, unknown>): AssessableOpenItem => ({
+            openItemId: String(row.OpenItemId ?? ''),
+            companyCode: String(row.CompanyCode ?? ''),
+            customerAccount: String(row.CustomerAccount ?? ''),
+            customerName: String(row.CustomerName ?? ''),
+            invoiceAmount: Number(row.InvoiceAmount ?? 0),
+            invoiceAmountCurrency: String(row.InvoiceAmountCurr ?? ''),
+            clearingStatus: String(row.ClearingStatus ?? OPEN_ITEM_CLEARING_STATUS.OPEN),
+        })
+
+        const loadOpenItems = async (): Promise<AssessableOpenItem[]> => {
             try {
                 const liveItems = await getLiveOpenItems()
-                LOG.info(`[ERP Open Items] Loaded ${liveItems.length} open item(s) from S/4HANA`)
+                const rows = liveItems.map(item => ({
+                    OpenItemId: item.openItemId,
+                    CompanyCode: item.companyCode,
+                    CustomerAccount: item.customerAccount,
+                    CustomerName: item.customerName,
+                    InvoiceAmount: item.invoiceAmount,
+                    InvoiceAmountCurr: item.invoiceAmountCurrency,
+                    ClearingStatus: item.clearingStatus === OPEN_ITEM_CLEARING_STATUS.CLEARED
+                        ? OPEN_ITEM_CLEARING_STATUS.CLEARED
+                        : OPEN_ITEM_CLEARING_STATUS.OPEN,
+                    PostingDate: item.postingDate,
+                    DocumentDate: item.documentDate,
+                }))
+                await paymentsRepository.upsertOpenItems(rows)
+                await paymentsRepository.deleteOpenItemsNotIn(rows.map(row => row.OpenItemId))
+                const cleared = rows.filter(row => row.ClearingStatus === OPEN_ITEM_CLEARING_STATUS.CLEARED).length
+                LOG.info('[ERP Sync] Open items synchronized from S/4HANA', { total: rows.length, open: rows.length - cleared, cleared })
+                return rows.map(toAssessableOpenItem)
+            } catch (err) {
+                const rows = await paymentsRepository.findAllCachedOpenItems() as Array<Record<string, unknown>>
+                LOG.warn('[ERP Sync] S/4HANA unreachable, using cached open items', { error: (err as Error).message, cached: rows.length })
+                return rows.map(toAssessableOpenItem)
+            }
+        }
+
+        type ProviderModule = Awaited<ReturnType<typeof resolveProvider>>
+        interface TextResult { content: string; usage?: TokenUsage; model?: string }
+
+        const callText = async (provider: ProviderModule, prompt: string): Promise<TextResult> => {
+            const withUsage = (provider as { generateTextWithUsage?: (p: string) => Promise<TextResult> }).generateTextWithUsage
+            if (typeof withUsage === 'function') return withUsage(prompt)
+            return { content: await provider.generateText(prompt) }
+        }
+
+        const parseReferences = (value: unknown): string[] => {
+            if (Array.isArray(value)) return value.map(String).filter(Boolean)
+            if (typeof value === 'string' && value.trim()) {
                 try {
-                    await UPSERT.into(DbOpenItem).entries(liveItems.map(item => ({
-                        OpenItemId: item.openItemId,
-                        CompanyCode: item.companyCode,
-                        CustomerAccount: item.customerAccount,
-                        CustomerName: item.customerName,
-                        InvoiceAmount: item.invoiceAmount,
-                        InvoiceAmountCurr: item.invoiceAmountCurrency,
-                        ClearingStatus: item.clearingStatus,
-                        PostingDate: item.postingDate,
-                        DocumentDate: item.documentDate,
-                    })))
-                } catch (e) {
-                    LOG.warn(`[ERP Open Items] Cache sync to SQLite warning: ${(e as Error).message}`)
+                    const parsed = JSON.parse(value)
+                    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [value]
+                } catch {
+                    return [value]
                 }
-            } catch (err) {
-                LOG.warn(`[ERP Open Items] Failed to fetch live items from S/4HANA (${(err as Error).message}). Using cached open items.`)
             }
-            const rows = await paymentsRepository.findAllCachedOpenItems()
-            LOG.info(`[ERP Open Items] Active open items pool: ${rows.length} item(s)`)
-            return rows.map((row: Record<string, unknown>) => ({
-                openItemId: String(row.OpenItemId),
-                companyCode: String(row.CompanyCode),
-                customerAccount: String(row.CustomerAccount),
-                customerName: String(row.CustomerName),
-                invoiceAmount: Number(row.InvoiceAmount),
-                invoiceAmountCurrency: String(row.InvoiceAmountCurr),
-                clearingStatus: String(row.ClearingStatus),
-            }))
+            return []
         }
 
-        interface AiMatchingOutput {
-            candidates: ProposedMatchCandidate[]
-            confidence: number
-            matchStatus: 'full' | 'probable' | 'toBeChecked' | 'noMatch'
-            rationale: string
-            promptTokens: number
-            completionTokens: number
-            totalTokens: number
-            usedModel: string
+        const toBuffer = async (content: unknown): Promise<Buffer> => {
+            if (!content) return Buffer.alloc(0)
+            if (Buffer.isBuffer(content)) return content
+            if (typeof content === 'string') return Buffer.from(content, 'base64')
+            if (typeof (content as any)[Symbol.asyncIterator] === 'function' || typeof (content as any).on === 'function') {
+                const chunks: Buffer[] = []
+                for await (const chunk of (content as any)) {
+                    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+                }
+                return Buffer.concat(chunks)
+            }
+            return Buffer.alloc(0)
         }
 
-        const runAiMatchingAgent = async (
-            payment: ExtractedPayment,
-            openItems: OpenItem[],
-            provider: any
-        ): Promise<AiMatchingOutput | null> => {
-            if (!provider || !provider.generateText) {
-                return null
+        const mapWithConcurrency = async <T, R>(items: T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> => {
+            const results: R[] = new Array(items.length)
+            let next = 0
+            const worker = async () => {
+                while (next < items.length) {
+                    const index = next++
+                    results[index] = await task(items[index])
+                }
             }
+            await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+            return results
+        }
 
-            const tStart = Date.now()
-            const model = activeModelName()
-            const references = Array.isArray(payment.references) ? payment.references : []
+        const AGENT_CONCURRENCY = 3
 
-            const prompt = `You are an AI Cash Application Matching Agent in SAP.
-Analyze the following payment against open ERP customer invoices to determine the best match.
-
-Payment details:
-- Payer: "${payment.payer}"
-- Amount: ${payment.amount} ${payment.currency}
-- Value Date: ${payment.valueDate}
-- References: ${references.length > 0 ? references.join(', ') : '(none)'}
-
-Available ERP Open Items:
-${openItems.map(item => `- Item: ${item.openItemId}, Customer: "${item.customerName}", Amount: ${item.invoiceAmount} ${item.invoiceAmountCurrency}, Status: ${item.clearingStatus}`).join('\n')}
-
-Task:
-1. Find the matching open item(s) in ERP. If the payment covers multiple open items (e.g. the sum of multiple open invoices equals or is close to the payment amount), identify all of them.
-2. Check for potential payer name variations, parent/subsidiary relationships, customer aliases, or third-party payments.
-3. If no direct reference is given, use invoice amounts, multi-invoice sums, and customer context to find the match.
-4. Assess a realistic confidence score between 0.00 and 1.00 following these STRICT criteria:
-   - 0.95 - 1.00 ("full"): Direct invoice reference(s) present AND exact amount match (single or multi-invoice for the SAME verified customer).
-   - 0.75 - 0.85 ("probable"): Payer is an obvious/known alias of the SAME single customer, exact amount match, single customer account.
-   - 0.40 - 0.60 ("toBeChecked"): AMBIGUOUS / UNCERTAIN match requiring human review:
-     * Payer name does not clearly match the customer name(s) (e.g. third-party payer, unrecorded alias).
-     * Invoices belong to DIFFERENT, UNRELATED customer accounts (e.g. Customer1 and Customer3) without explicit invoice references.
-     * Partial payment, overpayment, or currency mismatch.
-     * CRITICAL: If you state in the rationale that human verification, alias verification, or confirmation is needed, you MUST set confidence <= 0.60 (e.g. 0.50-0.55) and matchStatus to "toBeChecked". NEVER return confidence > 0.60 when there is doubt about payer or customer identity!
-   - 0.10 - 0.30 ("noMatch"): No matching open items found in ERP.
-
-Return ONLY a single valid JSON object (no markdown, no quotes around json):
-{
-  "confidence": number,
-  "matchedOpenItemIds": string[],
-  "matchStatus": "full" | "probable" | "toBeChecked" | "noMatch",
-  "rationale": string
-}`
-
-            try {
-                const generateFn = provider.generateTextWithUsage || provider.generateText
-                const genRes = await generateFn(prompt)
-                const raw = typeof genRes === 'string' ? genRes : genRes.content
-                let promptTokens = 980
-                let completionTokens = 135
-                let totalTokens = promptTokens + completionTokens
-                let usedModel = model
-
-                if (typeof genRes === 'object' && genRes.usage) {
-                    promptTokens = genRes.usage.promptTokens ?? promptTokens
-                    completionTokens = genRes.usage.completionTokens ?? completionTokens
-                    totalTokens = genRes.usage.totalTokens ?? (promptTokens + completionTokens)
-                }
-                if (typeof genRes === 'object' && genRes.model) {
-                    usedModel = genRes.model
-                }
-
-                const cleanJson = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
-                const parsed = JSON.parse(cleanJson)
-                const conf = typeof parsed.confidence === 'number' ? Math.round(parsed.confidence * 100) / 100 : 0.50
-                const primaryRationale = String(parsed.rationale || '')
-                const rawItemIds = parsed.matchedOpenItemIds || (parsed.matchedOpenItemId ? [parsed.matchedOpenItemId] : [])
-                const matchedItemIds: string[] = Array.isArray(rawItemIds) ? rawItemIds.map(String).map(s => s.trim()).filter(Boolean) : []
-                const validMatchedIds = matchedItemIds.filter(id => openItems.some(i => i.openItemId === id))
-                let mStatus: 'full' | 'probable' | 'toBeChecked' | 'noMatch' = validMatchedIds.length === 0
-                    ? 'noMatch'
-                    : (parsed.matchStatus || (conf >= 0.8 ? 'full' : (conf >= 0.5 ? 'probable' : 'noMatch')))
-
-                // Programmatic guardrails for uncertainty and cross-customer matching:
-                const matchedCustomers = new Set(
-                    validMatchedIds.map(id => openItems.find(i => i.openItemId === id)?.customerAccount).filter(Boolean)
-                )
-                const hasExplicitRef = references.some(ref => validMatchedIds.includes(ref))
-                const isCrossCustomer = matchedCustomers.size > 1 && !hasExplicitRef
-                const rationaleLower = primaryRationale.toLowerCase()
-                const indicatesUncertainty = !hasExplicitRef && (
-                    rationaleLower.includes('human verification') ||
-                    rationaleLower.includes('requires verification') ||
-                    rationaleLower.includes('wymaga weryfikacji') ||
-                    rationaleLower.includes('unknown') ||
-                    rationaleLower.includes('niepewn') ||
-                    rationaleLower.includes('potential third-party') ||
-                    rationaleLower.includes('unrecorded customer alias') ||
-                    rationaleLower.includes('unclear')
-                )
-
-                let effectiveConf = conf
-                if (validMatchedIds.length > 0 && (isCrossCustomer || indicatesUncertainty || mStatus === 'toBeChecked')) {
-                    mStatus = 'toBeChecked'
-                    if (effectiveConf > 0.60) {
-                        LOG.info(`⚠️ [AI Matching Agent] Confidence capped at 0.55 (was ${effectiveConf}) due to uncertainty/cross-customer match: crossCustomer=${isCrossCustomer} (${matchedCustomers.size} customer accounts), uncertain=${indicatesUncertainty}`)
-                        effectiveConf = 0.55
+        // Agent 1: new mails with a PDF -> IngestionLog rows (status received).
+        const runMailIntakeAgent = async (): Promise<Array<Record<string, unknown>>> => {
+            const messages = await fetchNewPdfMailboxMessages(messageId => paymentsRepository.hasLoggedMessage(messageId))
+            const created: Array<Record<string, unknown>> = []
+            for (const message of messages) {
+                for (const attachment of message.attachments) {
+                    const entry = {
+                        ID: randomUUID(),
+                        timestamp: new Date().toISOString(),
+                        source: INGESTION_SOURCE.MAILBOX,
+                        messageId: message.messageId,
+                        sender: message.from,
+                        subject: message.subject,
+                        filename: attachment.filename,
+                        bodyText: message.bodyText,
+                        classificationDecision: CLASSIFICATION_DECISION.RELEVANT,
+                        classificationReason: 'Mail z załącznikiem PDF — przekazany do ekstrakcji.',
+                        processingStatus: INGESTION_PROCESSING_STATUS.RECEIVED,
                     }
+                    await paymentsRepository.insertIngestionLog({ ...entry, attachmentContent: attachment.content })
+                    created.push(entry)
                 }
-
-                const candidates: ProposedMatchCandidate[] = validMatchedIds.length > 0
-                    ? validMatchedIds.map(id => {
-                        const found = openItems.find(i => i.openItemId === id)!
-                        return {
-                            openItemId: id,
-                            companyCode: found.companyCode || '1000',
-                            customerAccount: found.customerAccount || '',
-                            amount: found.invoiceAmount || payment.amount,
-                            currency: found.invoiceAmountCurrency || payment.currency,
-                            matchStatus: mStatus,
-                            matchScore: effectiveConf,
-                            rationale: primaryRationale,
-                        }
-                    })
-                    : [{
-                        openItemId: '(brak dopasowania)',
-                        companyCode: '1000',
-                        customerAccount: '',
-                        amount: payment.amount,
-                        currency: payment.currency,
-                        matchStatus: 'noMatch',
-                        matchScore: effectiveConf,
-                        rationale: primaryRationale || 'AI Matching Agent: brak pasujących otwartych pozycji w ERP.',
-                    }]
-
-                const duration = Date.now() - tStart
-                LOG.info(`✅ [AI Matching Agent] Completed in ${duration}ms (${(duration / 1000).toFixed(2)}s): conf=${effectiveConf}, status=${mStatus}, items=${validMatchedIds.join(', ') || '(brak dopasowania)'}`)
-                LOG.info(`   ↳ Rationale: ${primaryRationale}`)
-
-                return {
-                    candidates,
-                    confidence: effectiveConf,
-                    matchStatus: mStatus,
-                    rationale: primaryRationale,
-                    promptTokens,
-                    completionTokens,
-                    totalTokens,
-                    usedModel,
-                }
-
-            } catch (err) {
-                LOG.warn(`⚠️ [AI Matching Agent] Execution failed: ${(err as Error).message}`)
-                return null
             }
+            LOG.info('[Agent 1: Mail intake] Completed', { newMails: messages.length, newPdfs: created.length })
+            return created
         }
 
-        const runPipeline = async (pdfBytes: Buffer): Promise<PipelineResult> => {
-            const t0 = Date.now()
-            const pMode = providerMode()
-            const model = activeModelName()
-            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-            LOG.info(`🚀 [AI Pipeline] Starting payment processing`)
-            LOG.info(`   ↳ File Size: ${pdfBytes.length} bytes`)
-            LOG.info(`   ↳ Engine: ${pMode}`)
-            LOG.info(`   ↳ Model: ${model}`)
+        interface ExtractionOutcome {
+            paymentId: string
+            status: string
+            processingTimeMs: number
+        }
 
-            const tExtract = Date.now()
-            LOG.info(`🤖 [Step 1/3: Extraction Agent] Extracting payment fields from PDF using "${model}"...`)
-            const provider = await resolveProvider()
-            let payment: ExtractedPayment
-            let rawExtractionConfidence = 0.0
-
+        // Agent 2: PDF (+ mail subject/sender) -> Payments row. Low-confidence or
+        // zero-amount extractions go to needsReview and are not matched.
+        const runExtractionAgent = async (
+            pdf: Buffer,
+            provider: ProviderModule,
+            source: { fileName?: string | null; emailSubject?: string | null; sender?: string | null; existingPaymentId?: string | null },
+        ): Promise<ExtractionOutcome> => {
+            const tStart = Date.now()
+            const paymentId = source.existingPaymentId || randomUUID()
+            const extractFn = (provider as any).extractDocumentWithUsage || provider.extractDocument
+            let record: Record<string, unknown>
+            let status: string
             try {
-                const extractFn = (provider as any).extractDocumentWithUsage || provider.extractDocument
-                payment = await extractPayment(pdfBytes, extractFn)
-                rawExtractionConfidence = payment.extractionConfidence
-            } catch (extractErr) {
-                LOG.warn(`⚠️ [AI Pipeline] Extraction failed (${(extractErr as Error).message}). Falling back to zero-confidence payment.`)
-                payment = {
-                    payer: '[MOCK] Nieznany płatnik (błąd ekstrakcji)',
+                const payment = await extractPayment(pdf, extractFn, {
+                    emailSubject: source.emailSubject ?? undefined,
+                    sender: source.sender ?? undefined,
+                })
+                const confidence = Number(payment.extractionConfidence ?? 0)
+                const usable = confidence >= LOW_CONFIDENCE_THRESHOLD && Number(payment.amount) > 0
+                status = usable ? PAYMENT_STATUS.EXTRACTED : PAYMENT_STATUS.NEEDS_REVIEW
+                const model = payment.aiModel || activeModelName()
+                const hasUsage = payment.totalTokens != null || payment.promptTokens != null
+                const promptTokens = Number(payment.promptTokens ?? 0)
+                const completionTokens = Number(payment.completionTokens ?? 0)
+                record = {
+                    payer: payment.payer,
+                    companyCode: payment.companyCode || null,
+                    amount: payment.amount,
+                    currency: payment.currency,
+                    valueDate: payment.valueDate,
+                    references: payment.references,
+                    extractionConfidence: confidence,
+                    status,
+                    rationale: usable
+                        ? 'Dane wyodrębnione z awizo — oczekuje na dopasowanie.'
+                        : `Niska pewność ekstrakcji (${Math.round(confidence * 100)}%) lub brak kwoty — dopasowanie pominięte, wymagana weryfikacja ręczna.`,
+                    promptTokens: hasUsage ? promptTokens : null,
+                    completionTokens: hasUsage ? completionTokens : null,
+                    totalTokens: hasUsage ? Number(payment.totalTokens ?? promptTokens + completionTokens) : null,
+                    estimatedCost: hasUsage ? calculateTokenCost(model, promptTokens, completionTokens) : null,
+                    capacityUnits: hasUsage ? calculateCapacityUnits(model, promptTokens, completionTokens) : null,
+                    aiModel: model,
+                }
+            } catch (err) {
+                status = PAYMENT_STATUS.FAILED
+                record = {
+                    payer: source.sender || 'Nieznany płatnik',
                     amount: 0,
                     currency: 'EUR',
-                    valueDate: new Date().toISOString().slice(0, 10),
                     references: [],
-                    extractionConfidence: 0.0,
+                    extractionConfidence: 0,
+                    status,
+                    rationale: `Ekstrakcja nie powiodła się: ${(err as Error).message}`,
+                    aiModel: activeModelName(),
                 }
-                rawExtractionConfidence = 0.0
+                LOG.warn('[Agent 2: Extraction] Failed', { fileName: source.fileName, error: (err as Error).message })
             }
-
-            const durationExtract = Date.now() - tExtract
-            LOG.info(`✅ [Step 1/3: Extraction Agent] Extraction completed in ${durationExtract}ms (${(durationExtract / 1000).toFixed(2)}s):`, {
-                model,
-                payer: payment.payer,
-                amount: `${payment.amount} ${payment.currency}`,
-                valueDate: payment.valueDate,
-                references: payment.references,
-                confidence: rawExtractionConfidence
-            })
-
-            const tMatch = Date.now()
-            LOG.info(`🔍 [Step 2/3: Matching Agent] Fetching ERP open items and calculating candidates...`)
-            const openItems = await loadOpenItems()
-            let candidates: ProposedMatchCandidate[] = []
-            let aiMatchingTokens = { prompt: 0, completion: 0 }
-            let finalRationale = ''
-
-            if (payment.amount <= 0 && rawExtractionConfidence === 0) {
-                candidates = []
-                finalRationale = 'Nie udało się wyodrębnić danych płatności z dokumentu. Wymagana weryfikacja ręczna.'
+            const processingTimeMs = Date.now() - tStart
+            record.processingTimeMs = processingTimeMs
+            record.fileName = source.fileName || null
+            if (source.existingPaymentId && await paymentsRepository.findPaymentById(paymentId)) {
+                await paymentsRepository.updatePayment(paymentId, record)
             } else {
-                candidates = await proposeMatches(payment, openItems, provider.generateText)
-                const initialBestScore = candidates.reduce((max, c) => Math.max(max, c.matchScore), 0)
-                const hasExactFullMatch = candidates.length > 0 && candidates.every(c => c.matchStatus === 'full') && initialBestScore >= 0.95
-                finalRationale = candidates[0]?.rationale || ''
-
-                // If initial matching did not give a 100% confident match (e.g. score was 0, 0.5, toBeChecked, noMatch)
-                // or if extraction was low confidence, invoke the AI Matching Agent to perform multi-invoice sum matching, alias resolution, etc.
-                if (!hasExactFullMatch && typeof provider?.generateText === 'function') {
-                    LOG.info(`🤖 [Step 2/3: Matching Agent] Initial match status is "${candidates[0]?.matchStatus || 'none'}" (score: ${initialBestScore.toFixed(2)}). Invoking AI Matching Agent for deep evaluation...`)
-                    const aiResult = await runAiMatchingAgent(payment, openItems, provider)
-                    if (aiResult) {
-                        aiMatchingTokens.prompt = aiResult.promptTokens
-                        aiMatchingTokens.completion = aiResult.completionTokens
-                        candidates = aiResult.candidates
-                        finalRationale = aiResult.rationale
-                        payment.extractionConfidence = aiResult.confidence
-                        LOG.info(`🎯 [Step 2/3: Matching Agent] AI found ${candidates.length} match candidate(s) with confidence ${aiResult.confidence}: ${aiResult.rationale}`)
-                    }
-                }
+                await paymentsRepository.insertPayment({ ID: paymentId, ...record, attachmentContent: pdf })
             }
-
-            const durationMatch = Date.now() - tMatch
-            LOG.info(`🎯 [Step 2/3: Matching Agent] Final ${candidates.length} candidate(s) in ${durationMatch}ms (${(durationMatch / 1000).toFixed(2)}s):`)
-            for (const c of candidates) {
-                LOG.info(`   ↳ [${c.matchStatus.toUpperCase()}] Item: ${c.openItemId || '(none)'} | Score: ${c.matchScore} | ${c.rationale}`)
-            }
-            const totalPipelineTime = Date.now() - t0
-
-            // AI Execution Analytics & Costs
-            const promptTokens = (payment.promptTokens ?? 1420) + aiMatchingTokens.prompt
-            const completionTokens = (payment.completionTokens ?? 185) + aiMatchingTokens.completion
-            const totalTokens = promptTokens + completionTokens
-            const usedModel = payment.aiModel || model
-            const estimatedCost = calculateTokenCost(usedModel, promptTokens, completionTokens)
-            const capacityUnits = calculateCapacityUnits(usedModel, promptTokens, completionTokens)
-            payment.promptTokens = promptTokens
-            payment.completionTokens = completionTokens
-            payment.totalTokens = totalTokens
-            payment.aiModel = usedModel
-            payment.processingTimeMs = totalPipelineTime
-            payment.estimatedCost = estimatedCost
-            payment.capacityUnits = capacityUnits
-            payment.rationale = finalRationale
-
-            LOG.info(`⏱ [AI Pipeline] Processing finished in ${totalPipelineTime}ms (${(totalPipelineTime / 1000).toFixed(2)}s) [Tokens: ${totalTokens} (${promptTokens} in / ${completionTokens} out) | Cost: $${estimatedCost.toFixed(4)} | CU: ${capacityUnits.toFixed(4)}]`)
-            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-            return { payment, candidates, openItems, rawExtractionConfidence }
+            LOG.info('[Agent 2: Extraction] Payment stored', { paymentId, status, payer: record.payer, amount: record.amount, currency: record.currency, processingTimeMs })
+            return { paymentId, status, processingTimeMs }
         }
 
-        const persistPayment = async (
-            payment: ExtractedPayment,
-            candidates: ProposedMatchCandidate[],
-            rawExtractionConfidence?: number
-        ): Promise<{ paymentId: string, matchCount: number }> => {
-            const tPersist = Date.now()
-            const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
-            const paymentId = randomUUID()
+        interface MatchingOutcome {
+            status: string
+            candidates: ScoredCandidate[]
+            bestScore: number
+            rationale: string
+        }
 
-            const extractionConf = typeof rawExtractionConfidence === 'number' ? rawExtractionConfidence : payment.extractionConfidence
-            const bestCandidate = candidates.reduce<ProposedMatchCandidate | null>(
-                (best, cur) => (!best || cur.matchScore > best.matchScore ? cur : best),
-                null
-            )
-            const matchScore = bestCandidate ? bestCandidate.matchScore : 0
-            const hasFullMatch = candidates.length > 0 && candidates.every(c => c.matchStatus === 'full') && matchScore >= 0.85
-            const status = (hasFullMatch && extractionConf >= LOW_CONFIDENCE_THRESHOLD) ? 'matched' : 'needsReview'
-            const persistedCandidates = candidates
-            const effectiveConfidence = matchScore > 0 ? matchScore : extractionConf
-            const primaryRationale = payment.rationale || candidates[0]?.rationale || 'Brak propozycji dopasowania.'
-
-            LOG.info(`💾 [Step 3/3: Persistence] Saving payment ${paymentId} with status="${status}", confidence=${effectiveConfidence} (${persistedCandidates.length} candidate(s) stored)...`)
-            await paymentsRepository.insertPayment({
-                ID: paymentId,
-                payer: payment.payer,
-                amount: payment.amount,
-                currency: payment.currency,
-                valueDate: payment.valueDate,
-                references: payment.references,
-                extractionConfidence: effectiveConfidence,
-                status,
-                rationale: primaryRationale,
-                promptTokens: payment.promptTokens,
-                completionTokens: payment.completionTokens,
-                totalTokens: payment.totalTokens,
-                estimatedCost: payment.estimatedCost,
-                capacityUnits: payment.capacityUnits,
-                aiModel: payment.aiModel,
-                processingTimeMs: payment.processingTimeMs,
-            })
-            if (persistedCandidates.length > 0) {
-                await paymentsRepository.insertProposedMatches(persistedCandidates.map(candidate => ({
-                    payment_ID: paymentId,
-                    openItemId: candidate.openItemId,
-                    companyCode: candidate.companyCode || '1000',
-                    customerAccount: candidate.customerAccount || '',
-                    amount: candidate.amount,
-                    currency: candidate.currency,
-                    matchStatus: candidate.matchStatus,
-                    matchScore: candidate.matchScore,
-                    reviewStatus: (status === 'matched' && candidate.openItemId !== '(brak dopasowania)') ? 'approved' : 'pending',
-                    rationale: candidate.rationale || primaryRationale,
-                })))
+        // Agent 3a: one payment against all open items.
+        const runMatchingAgent = async (
+            paymentRow: Record<string, any>,
+            openItems: AssessableOpenItem[],
+            provider: ProviderModule,
+            options: { emailSubject?: string | null; emailBody?: string | null; baseProcessingMs?: number } = {},
+        ): Promise<MatchingOutcome> => {
+            const tStart = Date.now()
+            const paymentId = String(paymentRow.ID)
+            const payment: AssessablePayment = {
+                payer: String(paymentRow.payer ?? ''),
+                companyCode: paymentRow.companyCode ?? null,
+                amount: Number(paymentRow.amount ?? 0),
+                currency: String(paymentRow.currency ?? ''),
+                valueDate: paymentRow.valueDate ?? null,
+                references: parseReferences(paymentRow.references),
             }
-            const durationPersist = Date.now() - tPersist
-            LOG.info(`✅ [Step 3/3: Persistence] Successfully stored payment ${paymentId} in ${durationPersist}ms`)
-            return { paymentId, matchCount: persistedCandidates.length }
+
+            // Human decisions (approved / rejected / posted) are kept and their
+            // open items are not proposed again for this payment.
+            const existing = await paymentsRepository.findMatchesByPaymentId(paymentId) as Array<Record<string, any>>
+            const decided = new Set(existing
+                .filter(m => m.openItemId && m.reviewStatus !== PROPOSED_MATCH_STATUS.PENDING)
+                .map(m => String(m.openItemId)))
+            const pool = openItems.filter(item => !decided.has(item.openItemId))
+            const byId = new Map(pool.map(item => [item.openItemId, item]))
+
+            let candidates: ScoredCandidate[] = []
+            let rationale: string
+            let usage: TokenUsage | undefined
+            let usedModel: string | undefined
+            let deterministic = false
+
+            const exact = checkExactMatch(payment, pool)
+            if (exact.matched) {
+                deterministic = true
+                candidates = exact.candidates
+                rationale = candidates[0].rationale
+            } else {
+                const problems = exact.problems.join('; ')
+                const aiPool = selectAiCandidates(payment, pool)
+                let ai: AiMatchingResponse | null = null
+                if (aiPool.length > 0) {
+                    try {
+                        const result = await callText(provider, buildMatchingPrompt(payment, aiPool, {
+                            emailSubject: options.emailSubject,
+                            emailBody: options.emailBody,
+                            problems: exact.problems,
+                        }))
+                        usage = result.usage
+                        usedModel = result.model
+                        ai = parseAiMatchingResponse(result.content, aiPool.map(item => item.openItemId))
+                        if (!ai) LOG.warn('[Agent 3: Matching] AI answer not in expected format, using rule-based scoring', { paymentId })
+                    } catch (err) {
+                        LOG.warn('[Agent 3: Matching] AI call failed, using rule-based scoring', { paymentId, error: (err as Error).message })
+                    }
+                }
+                if (ai) {
+                    candidates = ai.matches
+                        .map(match => {
+                            const item = byId.get(match.openItemId)!
+                            const score = applyScoreGuardrails(payment, item, match.confidence)
+                            return toCandidate(item, score, match.reason || ai!.rationale)
+                        })
+                        .filter(candidate => candidate.matchScore > 0)
+                    rationale = ai.rationale || `Ocena AI. Rozbieżności: ${problems}.`
+                } else {
+                    const scores = heuristicFallbackScores(payment, pool)
+                    candidates = [...scores.entries()]
+                        .sort((a, b) => b[1].score - a[1].score)
+                        .slice(0, 5)
+                        .map(([id, score]) => toCandidate(byId.get(id)!, score.score, score.reason))
+                    rationale = `Ocena regułowa (bez AI). Rozbieżności: ${problems}.`
+                }
+                if (candidates.length === 0) rationale = `Brak pasującej pozycji otwartej w S/4HANA. Rozbieżności: ${problems}.`
+            }
+
+            const bestScore = candidates.reduce((best, candidate) => Math.max(best, candidate.matchScore), 0)
+            const status = deterministic || bestScore >= CONFIDENCE_THRESHOLDS.AI_EVALUATION
+                ? PAYMENT_STATUS.MATCHED
+                : PAYMENT_STATUS.NEEDS_REVIEW
+
+            await paymentsRepository.deleteReplaceableMatchesByPaymentId(paymentId)
+            await paymentsRepository.insertProposedMatches(candidates.map(candidate => ({
+                payment_ID: paymentId,
+                openItemId: candidate.openItemId,
+                companyCode: candidate.companyCode,
+                customerAccount: candidate.customerAccount,
+                amount: candidate.amount,
+                currency: candidate.currency,
+                matchStatus: candidate.matchStatus,
+                matchScore: candidate.matchScore,
+                reviewStatus: PROPOSED_MATCH_STATUS.PENDING,
+                rationale: candidate.rationale,
+            })))
+
+            // Token analytics: real usage only, accumulated per payment (extraction + every matching run).
+            const changes: Record<string, unknown> = {
+                status,
+                rationale,
+                processingTimeMs: (options.baseProcessingMs ?? 0) + (Date.now() - tStart),
+            }
+            if (usage) {
+                const model = usedModel || paymentRow.aiModel || activeModelName()
+                const promptTokens = Number(paymentRow.promptTokens ?? 0) + usage.promptTokens
+                const completionTokens = Number(paymentRow.completionTokens ?? 0) + usage.completionTokens
+                Object.assign(changes, {
+                    promptTokens,
+                    completionTokens,
+                    totalTokens: promptTokens + completionTokens,
+                    estimatedCost: calculateTokenCost(model, promptTokens, completionTokens),
+                    capacityUnits: calculateCapacityUnits(model, promptTokens, completionTokens),
+                    aiModel: model,
+                })
+            }
+            await paymentsRepository.updatePayment(paymentId, changes)
+            LOG.info('[Agent 3: Matching] Payment evaluated', {
+                paymentId,
+                payer: payment.payer,
+                deterministic,
+                status,
+                bestScore,
+                candidates: candidates.map(c => `${c.openItemId}:${c.matchScore}`),
+            })
+            return { status, candidates, bestScore, rationale }
+        }
+
+        // Agent 3b: per OPEN item, how sure are we that it is paid (all payments combined).
+        const assessOpenItems = async (): Promise<number> => {
+            const [items, matches, payments] = await Promise.all([
+                paymentsRepository.findOpenItemsByStatus(OPEN_ITEM_CLEARING_STATUS.OPEN) as Promise<Array<Record<string, unknown>>>,
+                paymentsRepository.findAllProposedMatches() as Promise<Array<Record<string, any>>>,
+                paymentsRepository.findAllPayments(['ID', 'payer', 'amount', 'currency', 'status']) as Promise<Array<Record<string, any>>>,
+            ])
+            const paymentById = new Map(payments.map(p => [String(p.ID), p]))
+            const matchesByPayment = new Map<string, Array<Record<string, any>>>()
+            for (const match of matches) {
+                if (!match.openItemId || match.reviewStatus === PROPOSED_MATCH_STATUS.REJECTED || Number(match.matchScore) <= 0) continue
+                const list = matchesByPayment.get(match.payment_ID) ?? []
+                list.push(match)
+                matchesByPayment.set(match.payment_ID, list)
+            }
+
+            const evidenceByItem = new Map<string, OpenItemMatchEvidence[]>()
+            for (const [paymentId, list] of matchesByPayment) {
+                const payment = paymentById.get(paymentId)
+                if (!payment || payment.status === PAYMENT_STATUS.FAILED) continue
+                const itemAmounts = list.map(m => Number(m.amount ?? 0))
+                for (const match of list) {
+                    const evidence = evidenceByItem.get(match.openItemId) ?? []
+                    evidence.push({
+                        payer: String(payment.payer ?? ''),
+                        paymentAmount: Number(payment.amount ?? 0),
+                        allocatedAmount: allocatePaymentAmount(Number(payment.amount ?? 0), Number(match.amount ?? 0), itemAmounts),
+                        currency: String(payment.currency ?? ''),
+                        matchScore: Number(match.matchScore ?? 0),
+                        matchStatus: String(match.matchStatus ?? ''),
+                        rationale: String(match.rationale ?? ''),
+                    })
+                    evidenceByItem.set(match.openItemId, evidence)
+                }
+            }
+
+            const assessedAt = new Date().toISOString()
+            for (const row of items) {
+                const item = toAssessableOpenItem(row)
+                const assessment = aggregateOpenItemAssessment(item, evidenceByItem.get(item.openItemId) ?? [])
+                await paymentsRepository.updateOpenItemAssessment(item.openItemId, { ...assessment, assessedAt })
+            }
+            LOG.info('[Agent 3: Assessment] Open items assessed', { openItems: items.length, withEvidence: evidenceByItem.size })
+            return items.length
+        }
+
+        const emailContextForPayment = async (paymentId: string) => {
+            const [log] = await paymentsRepository.findIngestionLogsByPaymentId(paymentId) as Array<Record<string, any>>
+            return { emailSubject: log?.subject ?? null, emailBody: log?.bodyText ?? null }
+        }
+
+        interface PipelineSummary {
+            openItems: number
+            newLogs: Array<Record<string, unknown>>
+            extracted: number
+            failed: number
+            evaluated: number
+            matched: number
+            review: number
+        }
+
+        // full=false: new mails only (startup, syncMailbox, scheduler).
+        // full=true:  also retries failed extractions and re-matches every unposted payment.
+        const runAgentPipeline = async ({ full }: { full: boolean }): Promise<PipelineSummary> => {
+            const tStart = Date.now()
+            LOG.info('[Pipeline] Started', { mode: full ? 'full' : 'incremental', engine: providerMode() })
+            const provider = await resolveProvider()
+
+            const openItems = await loadOpenItems()
+
+            let newLogs: Array<Record<string, unknown>> = []
+            try {
+                newLogs = await runMailIntakeAgent()
+            } catch (err) {
+                LOG.warn('[Agent 1: Mail intake] Mailbox unavailable', { error: (err as Error).message })
+            }
+
+            const logs = [
+                ...await paymentsRepository.findPendingIngestionLogs() as Array<Record<string, any>>,
+                ...(full ? await paymentsRepository.findFailedIngestionLogs() as Array<Record<string, any>> : []),
+            ]
+            const extractionMs = new Map<string, number>()
+            let failed = 0
+            await mapWithConcurrency(logs, AGENT_CONCURRENCY, async (log) => {
+                const pdf = await toBuffer(log.attachmentContent)
+                if (pdf.length === 0) {
+                    failed++
+                    await paymentsRepository.updateIngestionLog(log.ID, {
+                        processingStatus: INGESTION_PROCESSING_STATUS.FAILED,
+                        classificationReason: 'Pusty załącznik PDF.',
+                    })
+                    return
+                }
+                const outcome = await runExtractionAgent(pdf, provider, {
+                    fileName: log.filename,
+                    emailSubject: log.subject,
+                    sender: log.sender,
+                    existingPaymentId: log.payment_ID,
+                })
+                extractionMs.set(outcome.paymentId, outcome.processingTimeMs)
+                if (outcome.status === PAYMENT_STATUS.FAILED) failed++
+                await paymentsRepository.updateIngestionLog(log.ID, {
+                    payment_ID: outcome.paymentId,
+                    processingStatus: outcome.status === PAYMENT_STATUS.FAILED
+                        ? INGESTION_PROCESSING_STATUS.FAILED
+                        : INGESTION_PROCESSING_STATUS.EXTRACTED,
+                })
+            })
+
+            const statuses: string[] = full
+                ? [PAYMENT_STATUS.EXTRACTED, PAYMENT_STATUS.MATCHED, PAYMENT_STATUS.NEEDS_REVIEW]
+                : [PAYMENT_STATUS.EXTRACTED]
+            const candidates = (await paymentsRepository.findAllPayments() as Array<Record<string, any>>)
+                .filter(p => statuses.includes(p.status))
+                // Unreliable extractions stay in review; matching them would only produce noise.
+                .filter(p => Number(p.extractionConfidence ?? 0) >= LOW_CONFIDENCE_THRESHOLD && Number(p.amount ?? 0) > 0)
+            const outcomes = await mapWithConcurrency(candidates, AGENT_CONCURRENCY, async (payment) => {
+                const context = await emailContextForPayment(payment.ID)
+                return runMatchingAgent(payment, openItems, provider, { ...context, baseProcessingMs: extractionMs.get(payment.ID) })
+            })
+            await assessOpenItems()
+
+            const summary: PipelineSummary = {
+                openItems: openItems.length,
+                newLogs,
+                extracted: logs.length - failed,
+                failed,
+                evaluated: outcomes.length,
+                matched: outcomes.filter(o => o.status === PAYMENT_STATUS.MATCHED).length,
+                review: outcomes.filter(o => o.status === PAYMENT_STATUS.NEEDS_REVIEW).length,
+            }
+            LOG.info('[Pipeline] Completed', { mode: full ? 'full' : 'incremental', durationMs: Date.now() - tStart, ...summary, newLogs: newLogs.length })
+            return summary
+        }
+
+        // One pipeline run at a time across startup, scheduler and UI actions.
+        let activePipeline: Promise<PipelineSummary> | null = null
+        const startPipeline = (full: boolean): Promise<PipelineSummary> | null => {
+            if (activePipeline) return null
+            activePipeline = runAgentPipeline({ full }).finally(() => { activePipeline = null })
+            return activePipeline
         }
 
         const decodeFileContent = (fileContent: unknown): Buffer => {
@@ -634,296 +736,92 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             return next
         }
 
-        const storeUpload = async (req: Request, fileName: string, fileContent: unknown) => {
-            return queueProcessing(async () => {
-                const tUploadStart = Date.now()
-                LOG.info(`📥 [Upload] Received file upload: "${fileName}"`)
-                let pdfBytes: Buffer
-                try {
-                    pdfBytes = decodeFileContent(fileContent)
-                    LOG.info(`📥 [Upload] Decoded file "${fileName}": ${pdfBytes.length} bytes`)
-                } catch (err) {
-                    const error = err as Error
-                    LOG.error(`❌ [Upload] Could not decode fileContent for "${fileName}": ${error.message}`)
-                    return req.error(400, `Could not decode fileContent for "${fileName}": ${error.message}`)
-                }
-                let payment: ExtractedPayment
-                let candidates: ProposedMatchCandidate[]
-                let rawExtractionConfidence: number
-                try {
-                    ({ payment, candidates, rawExtractionConfidence } = await runPipeline(pdfBytes))
-                } catch (err) {
-                    const error = err as Error
-                    LOG.error(`❌ [Upload] Pipeline failed for "${fileName}" after ${Date.now() - tUploadStart}ms: ${error.message}`)
-                    return req.error(422, `Extraction failed for "${fileName}": ${error.message}`)
-                }
-                const { Payments } = cds.entities('poc.cashapp')
-                const { paymentId } = await persistPayment(payment, candidates, rawExtractionConfidence)
-                const totalUploadDuration = Date.now() - tUploadStart
-                LOG.info(`🎉 [Upload] Complete! Stored payment ${paymentId} for file "${fileName}" in ${totalUploadDuration}ms (${(totalUploadDuration / 1000).toFixed(2)}s)`)
-                return SELECT.one.from(Payments, paymentId)
-            })
-        }
+        // Manual upload = Agent 2 + Agent 3 for a single PDF (no mailbox step).
+        const processUploadedPdf = (pdf: Buffer, fileName?: string) => queueProcessing(async () => {
+            const provider = await resolveProvider()
+            const openItems = await loadOpenItems()
+            const extraction = await runExtractionAgent(pdf, provider, { fileName })
+            let matchCount = 0
+            if (extraction.status === PAYMENT_STATUS.EXTRACTED) {
+                const payment = await paymentsRepository.findPaymentById(extraction.paymentId)
+                const outcome = await runMatchingAgent(payment as Record<string, any>, openItems, provider, { baseProcessingMs: extraction.processingTimeMs })
+                matchCount = outcome.candidates.length
+            }
+            await assessOpenItems()
+            return { paymentId: extraction.paymentId, matchCount }
+        })
 
         this.on('processPaymentDocument', async (req: Request) => {
             const { pdfBase64 } = req.data as ProcessPaymentDocumentPayload
             if (!pdfBase64) return req.error({ code: '400', message: 'pdfBase64 is required' })
-            return queueProcessing(async () => {
-                LOG.info(`⚙️ [Process] processPaymentDocument triggered (payload length: ${pdfBase64?.length ?? 0} chars)`)
-                const pdfBytes = Buffer.from(pdfBase64 ?? '', 'base64')
-
-                const { payment, candidates, rawExtractionConfidence } = await runPipeline(pdfBytes)
-                const { paymentId, matchCount } = await persistPayment(payment, candidates, rawExtractionConfidence)
-
-                LOG.info(`🎉 [Process] Complete! Stored ${matchCount} proposed match(es) for payment ${paymentId}`)
-                return `Stored ${matchCount} proposed match(es) for payment ${paymentId}`
-            })
+            const { paymentId, matchCount } = await processUploadedPdf(Buffer.from(pdfBase64, 'base64'))
+            return `Stored ${matchCount} proposed match(es) for payment ${paymentId}`
         })
 
-
-        // Manual-upload entry point mirroring the reference workflow: raw PDF
-        // bytes in, stored Payment row out (matches readable via composition).
+        // Manual-upload entry point: raw PDF bytes in, stored Payment row out.
         this.on('uploadPayment', async (req: Request) => {
             const { fileName, fileContent } = req.data as { fileName: string; fileContent: unknown }
-            return storeUpload(req, fileName, fileContent)
+            let pdf: Buffer
+            try {
+                pdf = decodeFileContent(fileContent)
+            } catch (err) {
+                LOG.error('[Upload] Could not decode file content', { fileName, error: (err as Error).message })
+                return req.error(400, `Could not decode fileContent for "${fileName}": ${(err as Error).message}`)
+            }
+            const { paymentId } = await processUploadedPdf(pdf, fileName)
+            return SELECT.one.from(this.entities.Payments, paymentId)
         })
 
-        // AR Mailbox Synchronization: Agent 1 polls/classifies -> Agent 2 extracts -> Agent 3 matches
-        let isSyncingMailbox = false
-
+        // Incremental run: Agent 1 (new PDF mails) -> Agent 2 -> Agent 3.
         this.on('syncMailbox', async (req: Request) => {
-            if (isSyncingMailbox) {
-                return req.reject(409, 'Mailbox synchronization is already in progress.')
-            }
-            isSyncingMailbox = true
-            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-            LOG.info(`📬 [Mailbox Sync] Initiating AR mailbox polling & ingestion pipeline...`)
-
+            const run = startPipeline(false)
+            if (!run) return req.reject(409, 'PIPELINE_BUSY')
             try {
-                const items = await classifyMailboxItems({
-                    listMessages: listUnreadMailboxMessages,
-                    hasLoggedMessage: async (msgId: string) => paymentsRepository.hasLoggedMessage(msgId),
-                    generateTextWithUsage,
-                })
-
-                const createdLogs: Array<Record<string, unknown>> = []
-
-                for (const item of items) {
-                    if (item.isDuplicate) {
-                        LOG.info(`[Mailbox Sync] Skipping already processed message ${item.messageId}`)
-                        continue
-                    }
-
-                    if (item.classification === CLASSIFICATION_DECISION.RELEVANT && item.pdfAttachments.length > 0) {
-                        for (const att of item.pdfAttachments) {
-                            let paymentId: string | null = null
-                            try {
-                                LOG.info(`🤖 [Mailbox Sync] Running extraction & matching for attachment "${att.filename}" (Message: ${item.messageId})`)
-                                const { payment, candidates, rawExtractionConfidence } = await runPipeline(att.content)
-                                const result = await persistPayment(payment, candidates, rawExtractionConfidence)
-                                paymentId = result.paymentId
-                            } catch (pipeErr) {
-                                LOG.error(`❌ [Mailbox Sync] Pipeline failed for attachment "${att.filename}": ${(pipeErr as Error).message}`)
-                            }
-
-                            const logEntry = {
-                                ID: randomUUID(),
-                                timestamp: new Date().toISOString(),
-                                source: INGESTION_SOURCE.MAILBOX,
-                                messageId: item.messageId,
-                                subject: item.subject,
-                                filename: att.filename,
-                                classificationDecision: item.classification,
-                                classificationReason: item.reason,
-                                payment_ID: paymentId,
-                            }
-                            await paymentsRepository.insertIngestionLog(logEntry)
-                            createdLogs.push(logEntry)
-                        }
-                    } else {
-                        // Not relevant, needs review, or no attachments
-                        const logEntry = {
-                            ID: randomUUID(),
-                            timestamp: new Date().toISOString(),
-                            source: INGESTION_SOURCE.MAILBOX,
-                            messageId: item.messageId,
-                            subject: item.subject,
-                            filename: item.pdfAttachments[0]?.filename ?? null,
-                            classificationDecision: item.classification,
-                            classificationReason: item.reason,
-                            payment_ID: null,
-                        }
-                        await paymentsRepository.insertIngestionLog(logEntry)
-                        createdLogs.push(logEntry)
-                    }
-                }
-
-                LOG.info(`🎉 [Mailbox Sync] Completed! Processed ${items.length} item(s), recorded ${createdLogs.length} audit entry(ies).`)
-                LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-                if (createdLogs.length > 0) {
-                    req.notify('SYNC_MAILBOX_SUCCESS', undefined, [createdLogs.length])
-                } else {
-                    req.notify('SYNC_MAILBOX_NO_NEW')
-                }
-                return createdLogs
+                const summary = await run
+                if (summary.newLogs.length > 0) req.notify('SYNC_MAILBOX_SUCCESS', undefined, [summary.newLogs.length])
+                else req.notify('SYNC_MAILBOX_NO_NEW')
+                return summary.newLogs
             } catch (err) {
-                LOG.error(`❌ [Mailbox Sync] Failed: ${(err as Error).message}`)
+                LOG.error('[Mailbox Sync] Failed', { error: (err as Error).message })
                 return req.reject(500, `Mailbox synchronization failed: ${(err as Error).message}`)
-            } finally {
-                isSyncingMailbox = false
             }
         })
 
-        // Operator action: re-evaluates selected payment(s) against ERP open items via AI agent.
-        this.on('reprocessWithAI', 'Payments', async (req: Request) => {
-            const { Payments, ProposedMatches } = cds.entities('poc.cashapp')
-            const [{ ID }] = req.params as [{ ID: string }]
-            const payment = await SELECT.one.from(Payments, ID)
-            if (!payment) return req.error(404, `Payment ${ID} not found.`)
-
-            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-            LOG.info(`🔄 [AI Re-validation] Starting AI re-validation for payment ${ID} (${payment.payer}, ${payment.amount} ${payment.currency})`)
-            const openItems = await loadOpenItems()
-            let references: string[] = []
-            if (Array.isArray(payment.references)) {
-                references = payment.references
-            } else if (typeof payment.references === 'string') {
-                try {
-                    const parsed = JSON.parse(payment.references)
-                    references = Array.isArray(parsed) ? parsed : [payment.references]
-                } catch {
-                    references = [payment.references]
-                }
-            }
-
-            let finalCandidates: ProposedMatchCandidate[] = []
-            let newScore: number = 0.30
-            let primaryRationale: string = ''
-
-            const extracted: ExtractedPayment = {
-                payer: payment.payer,
-                amount: Number(payment.amount),
-                currency: payment.currency,
-                valueDate: payment.valueDate,
-                references,
-                extractionConfidence: Number(payment.extractionConfidence ?? 0),
-            }
-
-            const tRevalStart = Date.now()
-            let promptTokens = 980
-            let completionTokens = 135
-            let totalTokens = promptTokens + completionTokens
-            let usedModel = activeModelName()
-
-            let provider: any
+        // Full run: S/4 resync, retry failed extractions, re-match every unposted payment.
+        this.on('revalidatePipeline', async (req: Request) => {
+            const run = startPipeline(true)
+            if (!run) return req.reject(409, 'PIPELINE_BUSY')
             try {
-                provider = await resolveProvider()
-                const aiResult = await runAiMatchingAgent(extracted, openItems, provider)
-                if (aiResult) {
-                    finalCandidates = aiResult.candidates
-                    newScore = aiResult.confidence
-                    primaryRationale = aiResult.rationale
-                    promptTokens = aiResult.promptTokens
-                    completionTokens = aiResult.completionTokens
-                    totalTokens = aiResult.totalTokens
-                    usedModel = aiResult.usedModel
-                }
+                const summary = await run
+                req.notify('REVALIDATE_PIPELINE_SUCCESS', undefined, [String(summary.evaluated), String(summary.openItems), String(summary.matched), String(summary.review)])
+                return `Pipeline revalidated: ${summary.evaluated} payment(s) evaluated against ${summary.openItems} ERP open item(s) (${summary.matched} auto-matched, ${summary.review} pending review).`
             } catch (err) {
-                LOG.warn(`⚠️ [AI Re-evaluation] GenAI call failed: ${(err as Error).message}. Falling back to deterministic matching.`)
+                LOG.error('[Pipeline] Revalidation failed', { error: (err as Error).message })
+                return req.reject(500, `Pipeline revalidation failed: ${(err as Error).message}`)
+            }
+        })
+
+        // Operator action: Agent 3 for one payment, then open-item re-assessment.
+        this.on('reprocessWithAI', 'Payments', async (req: Request) => {
+            const [{ ID }] = req.params as [{ ID: string }]
+            const payment = await paymentsRepository.findPaymentById(ID) as Record<string, any> | undefined
+            if (!payment) return req.error(404, `Payment ${ID} not found.`)
+            if (payment.status === PAYMENT_STATUS.POSTED || payment.status === PAYMENT_STATUS.CLEARED) {
+                return req.error(400, 'PAYMENT_ALREADY_POSTED', undefined, [payment.payer])
             }
 
-            // Fallback / deterministic evaluation if AI returned no match
-            if (finalCandidates.length === 0 || finalCandidates.every(c => c.openItemId === '(brak dopasowania)')) {
-                try {
-                    const generator = provider?.generateText || (async () => JSON.stringify({ matchedCustomerAccounts: [], rationale: 'No matching open item found in ERP.' }))
-                    const candidates = await proposeMatches(extracted, openItems, generator)
-                    const validMatches = candidates.filter(c => c.openItemId && c.matchStatus !== 'noMatch')
-                    if (validMatches.length > 0) {
-                        finalCandidates = validMatches.map(c => ({
-                            ...c,
-                            matchScore: c.matchStatus === 'full' ? 0.95 : (c.matchStatus === 'probable' ? 0.75 : 0.50),
-                        }))
-                        const best = finalCandidates.reduce((acc, cur) => cur.matchScore > acc.matchScore ? cur : acc, finalCandidates[0])
-                        newScore = best.matchScore
-                        primaryRationale = best.rationale
-                    } else if (finalCandidates.length === 0) {
-                        newScore = 0.25
-                        primaryRationale = candidates[0]?.rationale || 'No matching open item found in ERP.'
-                    }
-                } catch {
-                    if (finalCandidates.length === 0) {
-                        newScore = 0.25
-                        primaryRationale = 'No matching open item found in ERP.'
-                    }
-                }
-            }
+            const provider = await resolveProvider()
+            const openItems = await loadOpenItems()
+            const outcome = await runMatchingAgent(payment, openItems, provider, await emailContextForPayment(ID))
+            await assessOpenItems()
 
-            const hasRealMatch = finalCandidates.some(c => c.openItemId && c.openItemId !== '(brak dopasowania)' && c.matchStatus !== 'noMatch')
-            const hasUncertainCandidates = finalCandidates.some(c => c.matchStatus === 'toBeChecked')
-            const newStatus = (newScore >= 0.6 && hasRealMatch && !hasUncertainCandidates) ? 'matched' : 'needsReview'
-
-            // Replace proposed matches for this payment
-            await paymentsRepository.deleteProposedMatchesByPaymentId(ID)
-            if (hasRealMatch) {
-                await paymentsRepository.insertProposedMatches(finalCandidates.filter(c => c.openItemId && c.openItemId !== '(brak dopasowania)').map(c => ({
-                    payment_ID: ID,
-                    openItemId: c.openItemId,
-                    companyCode: c.companyCode || '1000',
-                    customerAccount: c.customerAccount || '',
-                    amount: c.amount,
-                    currency: c.currency,
-                    matchStatus: c.matchStatus,
-                    matchScore: c.matchScore,
-                    reviewStatus: newStatus === 'matched' ? 'approved' : 'pending',
-                    rationale: c.rationale || primaryRationale || `AI rewalidacja: status ${c.matchStatus} z oceną ${c.matchScore.toFixed(2)}.`,
-                })))
+            const score = outcome.bestScore.toFixed(2)
+            if (outcome.candidates.length > 0) {
+                req.notify('AI_REVALIDATION_MATCHED', undefined, [payment.payer, score, outcome.status, outcome.candidates.length, outcome.candidates.map(c => c.openItemId).join(', ')])
             } else {
-                await paymentsRepository.insertProposedMatches([{
-                    payment_ID: ID,
-                    openItemId: '(brak dopasowania)',
-                    companyCode: '1000',
-                    customerAccount: '',
-                    amount: payment.amount,
-                    currency: payment.currency,
-                    matchStatus: 'noMatch',
-                    matchScore: newScore,
-                    reviewStatus: 'pending',
-                    rationale: primaryRationale || `AI rewalidacja: brak dopasowania (ocena ${newScore.toFixed(2)}).`,
-                }])
+                req.notify('AI_REVALIDATION_NO_MATCH', undefined, [payment.payer, score, outcome.status])
             }
-
-            const oldScore = Number(payment.extractionConfidence ?? 0).toFixed(2)
-            const updatedScore = Number(newScore).toFixed(2)
-            const durationTotalReval = Date.now() - tRevalStart
-            const estimatedCost = calculateTokenCost(usedModel, promptTokens, completionTokens)
-            const capacityUnits = calculateCapacityUnits(usedModel, promptTokens, completionTokens)
-
-            LOG.info(`💾 [AI Re-validation] Updating Payment ${ID}: confidence: ${oldScore} -> ${updatedScore}, status: "${payment.status}" -> "${newStatus}" [Tokens: ${totalTokens}, Cost: $${estimatedCost.toFixed(4)}, CU: ${capacityUnits.toFixed(4)}]`)
-
-            await UPDATE.entity(Payments, ID).with({
-                extractionConfidence: newScore,
-                status: newStatus,
-                rationale: primaryRationale || `AI rewalidacja: status ${newStatus} z oceną ${newScore.toFixed(2)}.`,
-                promptTokens,
-                completionTokens,
-                totalTokens,
-                estimatedCost,
-                capacityUnits,
-                aiModel: usedModel,
-                processingTimeMs: durationTotalReval,
-            })
-
-            LOG.info(`✅ [AI Re-validation] Completed for payment ${ID}`)
-            LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-
-            const matchedItems = finalCandidates.filter(c => c.openItemId && c.openItemId !== '(brak dopasowania)')
-            if (hasRealMatch) {
-                req.notify('AI_REVALIDATION_MATCHED', undefined, [payment.payer, updatedScore, newStatus, matchedItems.length, matchedItems.map(c => c.openItemId).join(', ')])
-            } else {
-                req.notify('AI_REVALIDATION_NO_MATCH', undefined, [payment.payer, updatedScore, newStatus])
-            }
-
-            return SELECT.one.from(Payments, ID)
+            return SELECT.one.from(this.entities.Payments, ID)
         })
 
         // Operator action: manually posts a validated payment to S/4HANA clearing.
@@ -936,7 +834,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
             LOG.info(`🏦 [Manual Post] Operator triggered S/4HANA posting for payment ${ID} (${payment.payer}, ${payment.amount} ${payment.currency})`)
 
-            if (payment.status === 'cleared') {
+            if (payment.status === PAYMENT_STATUS.POSTED || payment.status === PAYMENT_STATUS.CLEARED) {
                 return req.error(400, `Płatność dla ${payment.payer} została już wcześniej zaksięgowana w S/4HANA.`)
             }
 
@@ -948,9 +846,18 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 return req.error(400, `Płatność (${payment.payer}) nie posiada powiązanej otwartej pozycji w SAP. Dopasuj pozycję przed zaksięgowaniem.`)
             }
 
-            const pendingMatches = validMatches.filter((m: any) => m.reviewStatus !== 'posted')
+            const unpostedMatches = validMatches.filter((m: any) =>
+                m.reviewStatus !== PROPOSED_MATCH_STATUS.POSTED && m.reviewStatus !== PROPOSED_MATCH_STATUS.REJECTED)
+            if (unpostedMatches.length === 0) {
+                return req.error(400, 'PAYMENT_ALREADY_POSTED', undefined, [payment.payer])
+            }
+            // Low-score AI suggestions (toBeChecked) are posted only after an operator approves them.
+            const pendingMatches = unpostedMatches.filter((m: any) =>
+                m.reviewStatus === PROPOSED_MATCH_STATUS.APPROVED
+                || m.matchStatus === MATCH_STATUS.FULL
+                || m.matchStatus === MATCH_STATUS.PROBABLE)
             if (pendingMatches.length === 0) {
-                return req.error(400, `Wszystkie pozycje dla ${payment.payer} zostały już zaksięgowane w S/4HANA.`)
+                return req.error(400, 'PAYMENT_NO_CONFIDENT_MATCH', undefined, [payment.payer])
             }
 
             LOG.info(`🏦 [S/4 Clearing] Posting ${pendingMatches.length} clearance document(s) to S/4HANA for payment ${ID}...`)
@@ -966,7 +873,9 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             try {
                 results = await postClearing(clearingMatches)
             } catch (networkErr: any) {
-                const errorMsg = networkErr?.message || String(networkErr)
+                const s4Msg = networkErr?.response?.data?.error?.message || networkErr?.cause?.response?.data?.error?.message
+                const s4Code = networkErr?.response?.data?.error?.code || networkErr?.cause?.response?.data?.error?.code
+                const errorMsg = s4Msg ? `${s4Code ? `[${s4Code}] ` : ''}${typeof s4Msg === 'string' ? s4Msg : s4Msg.value || JSON.stringify(s4Msg)}` : (networkErr?.message || String(networkErr))
                 LOG.error(`❌ [S/4 Clearing] S/4HANA Destination/Connectivity error: ${errorMsg}`)
                 for (const m of pendingMatches) {
                     await UPDATE.entity(ProposedMatches, m.ID).with({
@@ -976,7 +885,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                         postingError: errorMsg,
                     })
                 }
-                return req.error(502, `Błąd połączenia z S/4HANA: ${errorMsg}`)
+                return req.error(502, 'S4_CONNECTIVITY_ERROR', undefined, [errorMsg])
             }
 
             const SAP_FAIL_SEVERITY = 3
@@ -1011,22 +920,29 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 }
             }
 
+            const clearedIds = pendingMatches
+                .filter((_m: any, i: number) => results[i] && !results[i].sapMessages.some((m: SapMessage) => m.numericSeverity >= SAP_FAIL_SEVERITY))
+                .map((m: any) => m.openItemId)
+            await paymentsRepository.markOpenItemsCleared(clearedIds)
+            await assessOpenItems()
+
             if (!hasFailures) {
-                const remainingUnposted = await paymentsRepository.findUnpostedMatchesByPaymentId(ID)
+                const remainingUnposted = (await paymentsRepository.findUnpostedMatchesByPaymentId(ID) as any[])
+                    .filter((m: any) => m.reviewStatus !== PROPOSED_MATCH_STATUS.REJECTED)
 
                 if (remainingUnposted.length === 0) {
                     await paymentsRepository.updatePayment(ID, {
-                        status: 'cleared',
+                        status: PAYMENT_STATUS.POSTED,
                     })
-                    LOG.info(`✅ [Manual Post] All items posted. Payment ${ID} status updated to "cleared"`)
+                    LOG.info(`✅ [Manual Post] All items posted. Payment ${ID} status updated to "${PAYMENT_STATUS.POSTED}"`)
                 }
                 LOG.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
                 req.notify('PAYMENT_POSTED_S4', undefined, [payment.payer, docNumbers.length, docNumbers.join(', ')])
-                return SELECT.one.from(Payments, ID)
+                return SELECT.one.from(this.entities.Payments, ID)
             }
- else {
+            else {
                 LOG.warn(`⚠️ [Manual Post] Partial or complete failure during posting for payment ${ID}`)
-                return req.error(502, `Błąd księgowania w S/4HANA: część pozycji nie została zaksięgowana.`)
+                return req.error(502, 'S4_POSTING_PARTIAL_ERROR')
             }
         })
 
@@ -1038,8 +954,9 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 return await getLiveOpenItems(customerAccount || undefined)
             } catch (err) {
                 LOG.warn(`[getOpenItems] S/4 read failed (${(err as Error).message}), returning cached open items.`)
-                const rows = await loadOpenItems()
-                return rows.map(item => ({
+                const rows = (await paymentsRepository.findAllCachedOpenItems() as Array<Record<string, any>>)
+                    .filter(row => !customerAccount || row.CustomerAccount === customerAccount)
+                return rows.map(toAssessableOpenItem).map(item => ({
                     openItemId: item.openItemId,
                     postingDate: null,
                     documentDate: null,
@@ -1174,15 +1091,17 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 }])
                 result = results[0]
             } catch (networkErr: any) {
-                const errorMsg = networkErr?.message || String(networkErr)
+                const s4Msg = networkErr?.response?.data?.error?.message || networkErr?.cause?.response?.data?.error?.message
+                const s4Code = networkErr?.response?.data?.error?.code || networkErr?.cause?.response?.data?.error?.code
+                const errorMsg = s4Msg ? `${s4Code ? `[${s4Code}] ` : ''}${typeof s4Msg === 'string' ? s4Msg : s4Msg.value || JSON.stringify(s4Msg)}` : (networkErr?.message || String(networkErr))
                 LOG.error(`❌ [S/4 Clearing] Transport error connecting to S/4HANA destination: ${errorMsg}`)
                 await UPDATE.entity(ProposedMatches, ID).with({
                     reviewStatus: 'approved',
                     postingId: null,
                     documentNumber: null,
-                    postingError: `Błąd połączenia z S/4HANA (${errorMsg}). Sprawdź konfigurację destination HD0_BAS.`,
+                    postingError: errorMsg,
                 })
-                return req.error(502, `Błąd połączenia z S/4HANA (${errorMsg}). Sprawdź konfigurację destination HD0_BAS.`)
+                return req.error(502, 'S4_CONNECTIVITY_ERROR', undefined, [errorMsg])
             }
             const failed = result.sapMessages.some((m: SapMessage) => m.numericSeverity >= SAP_MESSAGE_FAILURE_SEVERITY)
 
@@ -1204,16 +1123,19 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                     documentNumber: result.documentNumber,
                     postingError: null,
                 })
+                await paymentsRepository.markOpenItemsCleared([match.openItemId])
                 if (match.payment_ID) {
-                    const unpostedMatches = await paymentsRepository.findOtherUnpostedMatches(match.payment_ID, ID) as any[]
+                    const unpostedMatches = (await paymentsRepository.findOtherUnpostedMatches(match.payment_ID, ID) as any[])
+                        .filter((m: any) => m.reviewStatus !== PROPOSED_MATCH_STATUS.REJECTED)
 
                     if (unpostedMatches.length === 0) {
-                        await paymentsRepository.updatePayment(match.payment_ID, { status: PAYMENT_STATUS.CLEARED })
-                        LOG.info(`✅ [Review Action] All matches posted. Payment ${match.payment_ID} status set to "${PAYMENT_STATUS.CLEARED}".`)
+                        await paymentsRepository.updatePayment(match.payment_ID, { status: PAYMENT_STATUS.POSTED })
+                        LOG.info(`✅ [Review Action] All matches posted. Payment ${match.payment_ID} status set to "${PAYMENT_STATUS.POSTED}".`)
                     } else {
                         LOG.info(`ℹ️ [Review Action] Payment ${match.payment_ID} still has ${unpostedMatches.length} unposted match(es).`)
                     }
                 }
+                await assessOpenItems()
             }
 
             return SELECT.one.from(ProposedMatches, ID)
@@ -1231,6 +1153,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
             LOG.info(`👤 [Review Action] Operator rejecting match ${ID} for open item ${match.openItemId}`)
             await UPDATE.entity(ProposedMatches, ID).with({ reviewStatus: PROPOSED_MATCH_STATUS.REJECTED })
             LOG.info(`✅ [Review Action] ProposedMatches ${ID} status set to "${PROPOSED_MATCH_STATUS.REJECTED}"`)
+            await assessOpenItems()
 
             return SELECT.one.from(ProposedMatches, ID)
         })
@@ -1253,6 +1176,14 @@ Return ONLY a single valid JSON object (no markdown, no quotes around json):
                 await cds.tx(req).run(DELETE.from(ManualTask).where({ match_match_id: id }))
                 LOG.info(`🗑️ [Delete] Cleaned up ManualTask for MatchResult ${id}`)
             }
+        })
+
+        // Startup: S/4 open-item sync + incremental agent run, in the background so
+        // the server is ready immediately. AGENT_PIPELINE_ON_STARTUP=false disables it (tests).
+        cds.on('served', () => {
+            if (process.env.AGENT_PIPELINE_ON_STARTUP === 'false') return
+            const run = startPipeline(false)
+            run?.catch(err => LOG.warn('[Bootstrap] Startup pipeline failed', { error: (err as Error).message }))
         })
 
         return super.init()

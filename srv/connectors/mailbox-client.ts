@@ -94,24 +94,24 @@ async function loadMockMessages(): Promise<MailboxMessage[]> {
   const sampleFiles = [
     {
       file: 'sample-awizo-100pct.pdf',
-      id: '<remittance-inv-1001@acme-corp.com>',
-      from: 'Accounting <billing@acme-corp.com>',
-      subject: 'Payment Remittance Advice - Invoice OP-1001',
-      body: 'Dear Accounts Receivable Team,\n\nPlease find attached the remittance advice for invoice OP-1001 in the amount of 12,500.00 EUR.\nPayment was initiated via SEPA transfer.\n\nBest regards,\nACME Corp Finance Team',
+      id: '<remittance-inv-9123456799@friends-foes.com>',
+      from: 'Accounting <billing@friends-foes.com>',
+      subject: 'Payment Remittance Advice - Invoice 9123456799',
+      body: 'Dear Accounts Receivable Team,\n\nPlease find attached the remittance advice for invoice 9123456799 in the amount of 7,659.00 USD.\nPayment was initiated via wire transfer.\n\nBest regards,\nFriends and Foes US Finance Team',
     },
     {
       file: 'sample-awizo-50pct.pdf',
-      id: '<partial-remittance-772@logistics-plus.com>',
-      from: 'Payment Processing <ap@logistics-plus.com>',
-      subject: 'Partial Payment Advice note Ref LP-7720',
-      body: 'Hello,\n\nWe have executed partial settlement for recent shipments. Attached is the payment specification.\n\nRegards,\nLogistics Plus AG',
+      id: '<partial-remittance-9123456999@garfild.com>',
+      from: 'Payment Processing <ap@garfild.com>',
+      subject: 'Partial Payment Advice note Ref 9123456999',
+      body: 'Hello,\n\nWe have executed partial settlement (instalment 1 of 2 - 50%) for invoice 9123456999 in amount of 45,600.00 USD. Attached is the payment specification.\n\nRegards,\nGarfild Inc.',
     },
     {
       file: 'sample-awizo-0pct.pdf',
-      id: '<event-invitation-2026@logistics-summit.org>',
-      from: 'Logistics Summit 2026 <newsletter@logistics-summit.org>',
-      subject: 'Invitation: European Logistics & Supply Chain Summit 2026',
-      body: 'Dear Partner,\n\nWe are pleased to invite your finance and operations teams to the annual Summit.\nPlease find the agenda PDF attached.\n\nSee you there!',
+      id: '<marketing-advice-999@apex-consulting.org>',
+      from: 'Apex Consulting Partners <ap@apex-consulting.org>',
+      subject: 'Remittance advice for freelance marketing invoice INV-999-NOTFOUND',
+      body: 'Dear Partner,\n\nPlease find attached payment details for freelance marketing consultation in amount of 500.00 USD.\n\nBest regards,\nApex Consulting Partners Ltd.',
     },
   ];
 
@@ -149,7 +149,9 @@ async function loadMockMessages(): Promise<MailboxMessage[]> {
  * Read-only: leaves messages as unseen (`seen: false`).
  */
 export async function listUnreadMailboxMessages(): Promise<MailboxMessage[]> {
-  const destinationName = process.env.MAIL_DESTINATION_NAME ?? 'mail-read';
+  const destinationName = process.env.MAIL_DESTINATION_NAME
+    ?? (cds.env?.requires as any)?.mail?.credentials?.destination
+    ?? 'mail-read';
   const forceMock = process.env.MAILBOX_USE_MOCK === 'true';
 
   if (!forceMock) {
@@ -206,4 +208,221 @@ export async function listUnreadMailboxMessages(): Promise<MailboxMessage[]> {
   }
 
   return loadMockMessages();
+}
+
+function isPdfAttachment(att: { filename?: string; contentType?: string }): boolean {
+  const type = (att.contentType || '').toLowerCase();
+  const name = (att.filename || '').toLowerCase();
+  return type === 'application/pdf' || name.endsWith('.pdf');
+}
+
+interface BodyStructureNode {
+  type?: string;
+  parameters?: Record<string, string>;
+  dispositionParameters?: Record<string, string>;
+  childNodes?: BodyStructureNode[];
+}
+
+/** Walks an IMAP BODYSTRUCTURE tree and reports whether any part is a PDF. */
+export function bodyStructureHasPdf(node: BodyStructureNode | undefined): boolean {
+  if (!node) return false;
+  const filename = node.dispositionParameters?.filename || node.parameters?.name || '';
+  if (isPdfAttachment({ filename, contentType: node.type })) return true;
+  return (node.childNodes || []).some((child) => bodyStructureHasPdf(child));
+}
+
+/** Keeps only PDF attachments; returns null when the message carries none. */
+function withPdfAttachmentsOnly(message: MailboxMessage): MailboxMessage | null {
+  const pdfs = message.attachments.filter((att) => isPdfAttachment(att) && att.content.length > 0);
+  return pdfs.length > 0 ? { ...message, attachments: pdfs } : null;
+}
+
+/**
+ * Agent 1 (mail intake): returns only messages that carry at least one PDF and
+ * are not yet known locally (`isKnown(messageId)` → true skips the message).
+ *
+ * IMAP: envelope + BODYSTRUCTURE are fetched first (cheap), the full source is
+ * downloaded only for new PDF messages. Messages are never marked as seen, so the
+ * dedup key is the RFC 822 Message-ID, not the IMAP \Seen flag.
+ */
+export async function fetchNewPdfMailboxMessages(
+  isKnown: (messageId: string) => Promise<boolean>,
+): Promise<MailboxMessage[]> {
+  const destinationName = process.env.MAIL_DESTINATION_NAME
+    ?? (cds.env?.requires as any)?.mail?.credentials?.destination
+    ?? 'mail-read';
+  const forceMock = process.env.MAILBOX_USE_MOCK === 'true';
+  const config = forceMock ? null : await loadMailDestination(destinationName);
+
+  if (!config) {
+    const result: MailboxMessage[] = [];
+    for (const message of await loadMockMessages()) {
+      const pdfMessage = withPdfAttachmentsOnly(message);
+      if (pdfMessage && !(await isKnown(pdfMessage.messageId))) result.push(pdfMessage);
+    }
+    return result;
+  }
+
+  const allowInsecureTls = process.env.IMAP_ALLOW_INSECURE_TLS === 'true';
+  const client = new ImapFlow({
+    host: config.host,
+    port: config.port,
+    secure: config.useSsl,
+    auth: { user: config.user, pass: config.password },
+    tls: allowInsecureTls ? { rejectUnauthorized: false } : undefined,
+    logger: false,
+  });
+
+  await client.connect();
+  const lock = await client.getMailboxLock('INBOX');
+  try {
+    // Pass 1: headers only. No IMAP commands may run inside the fetch iterator.
+    const headers: Array<{ uid: number; messageId: string; hasPdf: boolean }> = [];
+    const mailbox = client.mailbox;
+    if (mailbox && mailbox.exists > 0) {
+      for await (const msg of client.fetch('1:*', { uid: true, envelope: true, bodyStructure: true })) {
+        headers.push({
+          uid: msg.uid,
+          messageId: msg.envelope?.messageId || `<uid-${msg.uid}@imap-mailbox>`,
+          hasPdf: bodyStructureHasPdf(msg.bodyStructure as BodyStructureNode | undefined),
+        });
+      }
+    }
+
+    const candidates: typeof headers = [];
+    let skippedNoPdf = 0;
+    let skippedKnown = 0;
+    for (const header of headers) {
+      if (!header.hasPdf) { skippedNoPdf++; continue; }
+      if (await isKnown(header.messageId)) { skippedKnown++; continue; }
+      candidates.push(header);
+    }
+
+    // Pass 2: download full source only for new PDF messages.
+    const messages: MailboxMessage[] = [];
+    for (const candidate of candidates) {
+      try {
+        const full = await client.fetchOne(String(candidate.uid), { source: true }, { uid: true });
+        if (!full || !full.source) continue;
+        const parsed = await simpleParser(full.source);
+        const pdfMessage = withPdfAttachmentsOnly({
+          messageId: parsed.messageId || candidate.messageId,
+          subject: parsed.subject || '',
+          from: parsed.from?.text || '',
+          bodyText: parsed.text || '',
+          attachments: (parsed.attachments || []).map((att) => ({
+            filename: att.filename || 'attachment.pdf',
+            contentType: att.contentType || 'application/octet-stream',
+            content: att.content,
+          })),
+        });
+        if (pdfMessage) messages.push(pdfMessage);
+      } catch (err) {
+        LOG.warn('[Mailbox] Failed to download message', { uid: candidate.uid, error: (err as Error).message });
+      }
+    }
+
+    LOG.info('[Mailbox] Intake finished', {
+      scanned: headers.length,
+      skippedNoPdf,
+      skippedKnown,
+      downloaded: messages.length,
+    });
+    return messages;
+  } finally {
+    lock.release();
+    await client.logout();
+  }
+}
+
+export interface MailboxContextResult {
+  hasMatches: boolean;
+  summary: string;
+  matchedMessages: Array<{
+    subject: string;
+    from: string;
+    snippet: string;
+    messageId: string;
+  }>;
+}
+
+/**
+ * Searches mailbox messages (unread or recent messages from IMAP, or local fixtures)
+ * for context matching an exception in payment (references, payer name, or amount).
+ */
+export async function searchMailboxContext(
+  params: {
+    payer?: string;
+    references?: string[];
+    amount?: number;
+  },
+  cachedMessages?: MailboxMessage[]
+): Promise<MailboxContextResult> {
+  try {
+    const messages = cachedMessages && cachedMessages.length > 0 ? cachedMessages : await listUnreadMailboxMessages();
+    const refs = (params.references || []).map((r) => r.trim().toLowerCase()).filter(Boolean);
+    const payerClean = (params.payer || '').trim().toLowerCase();
+    const amountStr = params.amount && params.amount > 0 ? String(params.amount) : null;
+
+    const matched: MailboxContextResult['matchedMessages'] = [];
+
+    for (const msg of messages) {
+      const subjectLower = msg.subject.toLowerCase();
+      const bodyLower = msg.bodyText.toLowerCase();
+      const fromLower = msg.from.toLowerCase();
+      const attNamesLower = msg.attachments.map((a) => a.filename.toLowerCase()).join(' ');
+
+      const refMatch = refs.some(
+        (ref) => subjectLower.includes(ref) || bodyLower.includes(ref) || attNamesLower.includes(ref)
+      );
+
+      const payerTokens = payerClean
+        .replace(/[^a-z0-9]/g, ' ')
+        .split(/\s+/)
+        .filter((t) => t.length >= 4);
+      const payerMatch = payerTokens.some(
+        (token) => fromLower.includes(token) || subjectLower.includes(token) || bodyLower.includes(token)
+      );
+
+      const amountMatch = amountStr ? (bodyLower.includes(amountStr) || subjectLower.includes(amountStr)) : false;
+
+      if (refMatch || payerMatch || (refs.length === 0 && amountMatch)) {
+        const cleanSnippet = msg.bodyText
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 200);
+
+        matched.push({
+          subject: msg.subject,
+          from: msg.from,
+          snippet: cleanSnippet || '(brak treści)',
+          messageId: msg.messageId,
+        });
+      }
+    }
+
+    if (matched.length > 0) {
+      const summaryLines = matched.map(
+        (m, i) => `[Email #${i + 1}] Od: ${m.from} | Temat: "${m.subject}" | Treść: "${m.snippet}"`
+      );
+      return {
+        hasMatches: true,
+        summary: `Znaleziono powiązane wiadomości e-mail w skrzynce (${matched.length}):\n${summaryLines.join('\n')}`,
+        matchedMessages: matched,
+      };
+    }
+
+    return {
+      hasMatches: false,
+      summary: 'Brak powiązanych wiadomości e-mail w skrzynce pocztowej dla danego płatnika/faktury.',
+      matchedMessages: [],
+    };
+  } catch (err) {
+    LOG.warn(`[Mailbox Search] Could not search mailbox: ${(err as Error).message}`);
+    return {
+      hasMatches: false,
+      summary: 'Weryfikacja skrzynki pocztowej pominięta (serwer pocztowy niedostępny).',
+      matchedMessages: [],
+    };
+  }
 }

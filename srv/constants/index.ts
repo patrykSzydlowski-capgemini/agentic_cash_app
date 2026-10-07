@@ -9,6 +9,7 @@ export const PAYMENT_STATUS = Object.freeze({
     MATCHED: 'matched',
     NEEDS_REVIEW: 'needsReview',
     CLEARED: 'cleared',
+    POSTED: 'posted',
     FAILED: 'failed'
 } as const);
 
@@ -41,7 +42,8 @@ export const CRITICALITY = Object.freeze({
     NEUTRAL: 0,
     NEGATIVE: 1, // Red
     CRITICAL: 2, // Yellow/Orange
-    POSITIVE: 3  // Green
+    POSITIVE: 3, // Green
+    INFORMATION: 5 // Blue
 } as const);
 
 export const SOURCE_SYSTEM = Object.freeze({
@@ -75,3 +77,27 @@ export const CLASSIFICATION_DECISION = Object.freeze({
 } as const);
 
 export type ClassificationDecision = typeof CLASSIFICATION_DECISION[keyof typeof CLASSIFICATION_DECISION];
+
+export const INGESTION_PROCESSING_STATUS = Object.freeze({
+    RECEIVED: 'received',
+    EXTRACTED: 'extracted',
+    FAILED: 'failed'
+} as const);
+
+export type IngestionProcessingStatus = typeof INGESTION_PROCESSING_STATUS[keyof typeof INGESTION_PROCESSING_STATUS];
+
+export const OPEN_ITEM_CLEARING_STATUS = Object.freeze({
+    OPEN: 'OPEN',
+    CLEARED: 'CLEARED'
+} as const);
+
+export type OpenItemClearingStatus = typeof OPEN_ITEM_CLEARING_STATUS[keyof typeof OPEN_ITEM_CLEARING_STATUS];
+
+export const MATCH_STATUS = Object.freeze({
+    FULL: 'full',
+    PROBABLE: 'probable',
+    TO_BE_CHECKED: 'toBeChecked',
+    NO_MATCH: 'noMatch'
+} as const);
+
+export type MatchStatus = typeof MATCH_STATUS[keyof typeof MATCH_STATUS];
