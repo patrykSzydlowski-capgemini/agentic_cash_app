@@ -4,6 +4,7 @@ import {
   aggregateOpenItemAssessment,
   allocatePaymentAmount,
   applyScoreGuardrails,
+  buildMatchingPrompt,
   checkExactMatch,
   companyNamesMatch,
   heuristicFallbackScores,
@@ -76,13 +77,13 @@ test('exact match: one payment covering several referenced items is still 100 %'
 
 test('exact match fails with a reason for each mismatch (currency, amount, payer, company code, cleared)', () => {
   const cases: Array<[Partial<AssessablePayment>, RegExp]> = [
-    [{ currency: 'EUR' }, /waluta/],
-    [{ amount: 750 }, /kwota/],
-    [{ payer: 'Someone Else GmbH' }, /nazwa płatnika/],
-    [{ companyCode: '2060' }, /kod spółki/],
-    [{ references: [] }, /nie zawiera numerów/],
-    [{ references: ['OP-404'] }, /nie istnieje/],
-    [{ references: ['OP-9'], payer: 'Old Customer', amount: 500 }, /rozliczone/],
+    [{ currency: 'EUR' }, /payment currency EUR differs/],
+    [{ amount: 750 }, /payment amount .* differs/],
+    [{ payer: 'Someone Else GmbH' }, /payer name/],
+    [{ companyCode: '2060' }, /company code 2060 differs/],
+    [{ references: [] }, /contains no open item numbers/],
+    [{ references: ['OP-404'] }, /none of the referenced numbers/],
+    [{ references: ['OP-9'], payer: 'Old Customer', amount: 500 }, /already cleared/],
   ];
   for (const [overrides, reason] of cases) {
     const result = checkExactMatch(payment(overrides), ITEMS);
@@ -141,7 +142,7 @@ test('open item assessment: no payment advice -> 0 % noMatch', () => {
   const result = aggregateOpenItemAssessment(ITEMS[0], []);
   assert.equal(result.aiConfidence, 0);
   assert.equal(result.aiMatchStatus, 'noMatch');
-  assert.match(result.aiRationale, /Brak awizo/);
+  assert.match(result.aiRationale, /No remittance advice/);
 });
 
 test('open item assessment: best evidence wins, partial payment stays around 50 %', () => {
@@ -161,11 +162,18 @@ test('open item assessment: item paid in two instalments -> close to 99 %', () =
   assert.equal(result.aiConfidence, 0.97);
   assert.equal(result.aiMatchStatus, 'probable');
   assert.equal(result.matchedPaymentCount, 2);
-  assert.match(result.aiRationale, /2 płatnościach/);
+  assert.match(result.aiRationale, /paid in 2 payments/);
 });
 
 test('open item assessment: deterministic full match -> 100 %', () => {
   const result = aggregateOpenItemAssessment(ITEMS[0], [evidence({})]);
   assert.equal(result.aiConfidence, 1);
   assert.equal(result.aiMatchStatus, 'full');
+});
+
+test('matching prompt asks the model to always answer in English', () => {
+  const prompt = buildMatchingPrompt(payment({}), ITEMS.slice(0, 1), { emailSubject: 'Awizo płatności' });
+  assert.match(prompt, /"reason":"<one sentence in English>"/);
+  assert.match(prompt, /Always write "reason" and "rationale" in English/);
+  assert.doesNotMatch(prompt, /Polish/);
 });

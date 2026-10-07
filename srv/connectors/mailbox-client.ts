@@ -395,7 +395,7 @@ export async function searchMailboxContext(
         matched.push({
           subject: msg.subject,
           from: msg.from,
-          snippet: cleanSnippet || '(brak treści)',
+          snippet: cleanSnippet || '(no content)',
           messageId: msg.messageId,
         });
       }
@@ -403,25 +403,25 @@ export async function searchMailboxContext(
 
     if (matched.length > 0) {
       const summaryLines = matched.map(
-        (m, i) => `[Email #${i + 1}] Od: ${m.from} | Temat: "${m.subject}" | Treść: "${m.snippet}"`
+        (m, i) => `[Email #${i + 1}] From: ${m.from} | Subject: "${m.subject}" | Body: "${m.snippet}"`
       );
       return {
         hasMatches: true,
-        summary: `Znaleziono powiązane wiadomości e-mail w skrzynce (${matched.length}):\n${summaryLines.join('\n')}`,
+        summary: `Related emails found in the mailbox (${matched.length}):\n${summaryLines.join('\n')}`,
         matchedMessages: matched,
       };
     }
 
     return {
       hasMatches: false,
-      summary: 'Brak powiązanych wiadomości e-mail w skrzynce pocztowej dla danego płatnika/faktury.',
+      summary: 'No related emails found in the mailbox for this payer/invoice.',
       matchedMessages: [],
     };
   } catch (err) {
     LOG.warn(`[Mailbox Search] Could not search mailbox: ${(err as Error).message}`);
     return {
       hasMatches: false,
-      summary: 'Weryfikacja skrzynki pocztowej pominięta (serwer pocztowy niedostępny).',
+      summary: 'Mailbox check skipped (mail server unavailable).',
       matchedMessages: [],
     };
   }

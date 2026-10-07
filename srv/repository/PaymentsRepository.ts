@@ -1,5 +1,5 @@
 import cds from '@sap/cds'
-import { INGESTION_PROCESSING_STATUS, OPEN_ITEM_CLEARING_STATUS, PIPELINE_RUN_STATUS, PROPOSED_MATCH_STATUS } from '#constants'
+import { INGESTION_PROCESSING_STATUS, OPEN_ITEM_CLEARING_STATUS, OPEN_ITEM_SOURCE, PIPELINE_RUN_STATUS, PROPOSED_MATCH_STATUS } from '#constants'
 
 /**
  * Enterprise Repository Pattern (inspired by DHL template):
@@ -101,10 +101,35 @@ export class PaymentsRepository {
         return UPSERT.into(this.openItems).entries(items)
     }
 
-    /** Drops cached items S/4HANA no longer returns (archived / reversed documents). */
+    /** Drops cached items S/4HANA no longer returns (archived / reversed documents); local test items stay. */
     async deleteOpenItemsNotIn(openItemIds: string[]) {
-        if (openItemIds.length === 0) return DELETE.from(this.openItems)
-        return DELETE.from(this.openItems).where({ OpenItemId: { 'not in': openItemIds } })
+        // `source` is null on rows cached before the column existed — those are S/4 rows.
+        const notLocal = `source is null or source != '${OPEN_ITEM_SOURCE.LOCAL}'`
+        if (openItemIds.length === 0) return DELETE.from(this.openItems).where(notLocal)
+        return DELETE.from(this.openItems).where({ OpenItemId: { 'not in': openItemIds } }).and(notLocal)
+    }
+
+    /**
+     * Writes only rows whose id is not cached yet, so local test items keep
+     * their state (cleared, dismissed, AI assessment) across restarts. UPSERT
+     * keeps concurrent seeding idempotent; rows must carry every non-default field.
+     */
+    async insertMissingOpenItems(items: Array<Record<string, unknown>>): Promise<number> {
+        if (!items || items.length === 0) return 0
+        const ids = items.map(item => String(item.OpenItemId))
+        const existing = await SELECT.from(this.openItems).columns('OpenItemId').where({ OpenItemId: { in: ids } }) as Array<{ OpenItemId: string }>
+        const known = new Set(existing.map(row => row.OpenItemId))
+        const missing = items.filter(item => !known.has(String(item.OpenItemId)))
+        if (missing.length > 0) await UPSERT.into(this.openItems).entries(missing)
+        return missing.length
+    }
+
+    /** Ids among `openItemIds` that are local test items (cleared locally, never posted to S/4HANA). */
+    async findLocalOpenItemIds(openItemIds: string[]): Promise<Set<string>> {
+        if (!openItemIds || openItemIds.length === 0) return new Set()
+        const rows = await SELECT.from(this.openItems).columns('OpenItemId')
+            .where({ OpenItemId: { in: openItemIds }, source: OPEN_ITEM_SOURCE.LOCAL }) as Array<{ OpenItemId: string }>
+        return new Set(rows.map(row => row.OpenItemId))
     }
 
     async markOpenItemsCleared(openItemIds: string[]) {

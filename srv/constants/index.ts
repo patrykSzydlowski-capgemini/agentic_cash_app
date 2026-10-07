@@ -93,6 +93,14 @@ export const OPEN_ITEM_CLEARING_STATUS = Object.freeze({
 
 export type OpenItemClearingStatus = typeof OPEN_ITEM_CLEARING_STATUS[keyof typeof OPEN_ITEM_CLEARING_STATUS];
 
+/** Origin of an OpenItem row: synced from S/4HANA or a local-only test item (never sent to S/4). */
+export const OPEN_ITEM_SOURCE = Object.freeze({
+    S4: 'S4',
+    LOCAL: 'LOCAL'
+} as const);
+
+export type OpenItemSource = typeof OPEN_ITEM_SOURCE[keyof typeof OPEN_ITEM_SOURCE];
+
 export const MATCH_STATUS = Object.freeze({
     FULL: 'full',
     PROBABLE: 'probable',

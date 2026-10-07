@@ -144,7 +144,7 @@ test('manualApprove approves the selected match and sets manual review reason', 
     assert.equal(match.match_status, 'MATCHED');
     assert.equal(match.action_required, false);
     assert.equal(match.review_status, 'APPROVED');
-    assert.match(match.review_reason, /Ręcznie/);
+    assert.match(match.review_reason, /Manually approved/);
 });
 
 for (const confidence of [0.81, 0.8, 0.79]) {
@@ -266,7 +266,7 @@ test('postToS4 rejects payment with no matching open item (400)', async () => {
     const response = await postRaw(`/Payments('${id}')/CashSyncService.postToS4`, {});
     assert.equal(response.status, 400);
     const body = await response.text();
-    assert.match(body, /nie posiada powiązanej otwartej pozycji w SAP/);
+    assert.match(body, /has no matched open item/);
 });
 
 test('postToS4 performs clearing attempt in S/4HANA', async () => {
@@ -383,6 +383,42 @@ test('open items: S/4 cache serves OPEN items with an AI paid-assessment, unmatc
     const unpaid = items.find((i: any) => i.OpenItemId === '9123456999');
     assert.ok(unpaid, 'Garfild item expected in seed');
     assert.equal(Number(unpaid.aiConfidence ?? 0), 0);
+});
+
+test('local test open items are served with source LOCAL next to the S/4 cache', async () => {
+    let local: any[] = [];
+    for (let attempt = 0; attempt < 30 && local.length === 0; attempt++) {
+        local = (await get(`/OpenItem?$filter=source eq 'LOCAL'`)).value;
+        if (local.length === 0) await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.ok(local.some((i: any) => i.OpenItemId === '9900000103'), 'unpaid local test item expected');
+    assert.ok(local.every((i: any) => i.sourceText === 'Local test item'), 'source shown as its localized enum title');
+    const s4 = await get(`/OpenItem('9123456999')`);
+    assert.equal(s4.source, 'S4');
+    assert.equal(s4.sourceText, 'S/4HANA');
+});
+
+test('posting a payment for local test items clears them locally without calling S/4HANA', async () => {
+    const id = '00000001-0000-0000-0000-000000000005';
+    const matched = await (await post(`/Payments('${id}')/CashSyncService.reprocessWithAI`, {})).json();
+    assert.equal(matched.status, 'matched', 'Adventure Works pays 9900000106 + 9900000107 exactly');
+
+    // The test S/4 destination does not exist, so a successful post proves S/4 was not called.
+    const response = await postRaw(`/Payments('${id}')/CashSyncService.postToS4`, {});
+    assert.equal(response.status, 200, await response.clone().text());
+
+    const matches = (await get(`/ProposedMatches?$filter=payment_ID eq ${id}`)).value;
+    assert.deepEqual(matches.map((m: any) => m.openItemId).sort(), ['9900000106', '9900000107']);
+    for (const match of matches) {
+        assert.equal(match.reviewStatus, 'posted');
+        assert.equal(match.documentNumber, `LOCAL-${match.openItemId}`);
+        assert.match(match.rationale, /Full match/);
+    }
+    for (const itemId of ['9900000106', '9900000107']) {
+        const item = await get(`/OpenItem('${itemId}')`);
+        assert.equal(item.ClearingStatus, 'CLEARED');
+    }
+    assert.equal((await get(`/Payments('${id}')`)).status, 'posted');
 });
 
 test('syncMailbox (Agent 1) stores only new PDF mails and is idempotent', async () => {

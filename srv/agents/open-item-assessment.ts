@@ -142,32 +142,32 @@ export function checkExactMatch(payment: AssessablePayment, openItems: Assessabl
   const referenced = referencedOpenItems(payment, openItems);
   const problems: string[] = [];
 
-  if ((payment.references ?? []).length === 0) problems.push('awizo nie zawiera numerów pozycji otwartych');
-  else if (referenced.length === 0) problems.push(`żaden z numerów (${payment.references.join(', ')}) nie istnieje w S/4HANA`);
+  if ((payment.references ?? []).length === 0) problems.push('the remittance advice contains no open item numbers');
+  else if (referenced.length === 0) problems.push(`none of the referenced numbers (${payment.references.join(', ')}) exists as an open item`);
 
   if (referenced.length > 0) {
     const cleared = referenced.filter((item) => item.clearingStatus === OPEN_ITEM_CLEARING_STATUS.CLEARED);
-    if (cleared.length > 0) problems.push(`pozycje ${cleared.map((i) => i.openItemId).join(', ')} są już rozliczone`);
+    if (cleared.length > 0) problems.push(`items ${cleared.map((i) => i.openItemId).join(', ')} are already cleared`);
 
     const wrongCurrency = referenced.filter((item) => item.invoiceAmountCurrency !== payment.currency);
     if (wrongCurrency.length > 0) {
-      problems.push(`waluta płatności ${payment.currency} różni się od waluty pozycji (${wrongCurrency.map((i) => `${i.openItemId}: ${i.invoiceAmountCurrency}`).join(', ')})`);
+      problems.push(`payment currency ${payment.currency} differs from the item currency (${wrongCurrency.map((i) => `${i.openItemId}: ${i.invoiceAmountCurrency}`).join(', ')})`);
     }
 
     const total = sumAmounts(referenced);
     if (!amountsEqual(total, payment.amount)) {
-      problems.push(`kwota płatności ${fmt(payment.amount, payment.currency)} różni się od sumy pozycji ${fmt(total, referenced[0].invoiceAmountCurrency)}`);
+      problems.push(`payment amount ${fmt(payment.amount, payment.currency)} differs from the open item total ${fmt(total, referenced[0].invoiceAmountCurrency)}`);
     }
 
     const otherCustomers = referenced.filter((item) => !companyNamesMatch(payment.payer, item.customerName));
     if (otherCustomers.length > 0) {
-      problems.push(`nazwa płatnika „${payment.payer}” nie zgadza się z klientem (${[...new Set(otherCustomers.map((i) => i.customerName))].join(', ')})`);
+      problems.push(`payer name "${payment.payer}" does not match the customer (${[...new Set(otherCustomers.map((i) => i.customerName))].join(', ')})`);
     }
 
     const code = payment.companyCode?.trim();
     if (code) {
       const otherCodes = referenced.filter((item) => item.companyCode && item.companyCode !== code);
-      if (otherCodes.length > 0) problems.push(`kod spółki ${code} różni się od kodu pozycji (${otherCodes.map((i) => i.companyCode).join(', ')})`);
+      if (otherCodes.length > 0) problems.push(`company code ${code} differs from the item company code (${otherCodes.map((i) => i.companyCode).join(', ')})`);
     }
   }
 
@@ -175,8 +175,8 @@ export function checkExactMatch(payment: AssessablePayment, openItems: Assessabl
 
   const ids = referenced.map((item) => item.openItemId).join(', ');
   const rationale = referenced.length === 1
-    ? `Pełne dopasowanie: numer pozycji ${ids}, kwota ${fmt(payment.amount, payment.currency)}, waluta i klient „${referenced[0].customerName}” zgadzają się z S/4HANA.`
-    : `Pełne dopasowanie: płatność pokrywa pozycje ${ids}; suma ${fmt(payment.amount, payment.currency)}, waluta i klient zgadzają się z S/4HANA.`;
+    ? `Full match: open item ${ids}, amount ${fmt(payment.amount, payment.currency)}, currency and customer "${referenced[0].customerName}" agree with the ERP open item.`
+    : `Full match: the payment covers open items ${ids}; total ${fmt(payment.amount, payment.currency)}, currency and customer agree with the ERP open items.`;
 
   return {
     matched: true,
@@ -221,19 +221,19 @@ export function heuristicFallbackScores(payment: AssessablePayment, openItems: A
 
     let result: HeuristicScore | undefined;
     if (isReferenced) {
-      if (amountMatches && nameMatches) result = { score: 0.95, reason: 'numer pozycji, kwota i waluta zgadzają się; drobna różnica w danych płatnika' };
-      else if (amountMatches) result = { score: 0.6, reason: `numer pozycji i kwota zgadzają się, ale płatnik „${payment.payer}” różni się od klienta „${item.customerName}”` };
-      else if (partial) result = { score: 0.5, reason: `płatność częściowa: ${fmt(payment.amount, payment.currency)} z ${fmt(item.invoiceAmount, item.invoiceAmountCurrency)}` };
-      else if (!sameCurrency) result = { score: 0.4, reason: `numer pozycji zgadza się, ale waluta ${payment.currency} ≠ ${item.invoiceAmountCurrency}` };
-      else result = { score: 0.3, reason: `numer pozycji zgadza się, ale kwota ${fmt(payment.amount, payment.currency)} przekracza ${fmt(item.invoiceAmount, item.invoiceAmountCurrency)}` };
+      if (amountMatches && nameMatches) result = { score: 0.95, reason: 'open item number, amount and currency agree; minor difference in the payer details' };
+      else if (amountMatches) result = { score: 0.6, reason: `open item number and amount agree, but payer "${payment.payer}" differs from customer "${item.customerName}"` };
+      else if (partial) result = { score: 0.5, reason: `partial payment: ${fmt(payment.amount, payment.currency)} of ${fmt(item.invoiceAmount, item.invoiceAmountCurrency)}` };
+      else if (!sameCurrency) result = { score: 0.4, reason: `open item number agrees, but currency ${payment.currency} ≠ ${item.invoiceAmountCurrency}` };
+      else result = { score: 0.3, reason: `open item number agrees, but amount ${fmt(payment.amount, payment.currency)} exceeds ${fmt(item.invoiceAmount, item.invoiceAmountCurrency)}` };
     } else if (nameMatches && amountMatches) {
-      result = { score: 0.85, reason: 'brak numeru pozycji w awizo, ale klient, kwota i waluta zgadzają się' };
+      result = { score: 0.85, reason: 'no open item number in the advice, but customer, amount and currency agree' };
     } else if (nameMatches && partial) {
-      result = { score: 0.4, reason: `brak numeru pozycji; ten sam klient, możliwa płatność częściowa ${fmt(payment.amount, payment.currency)} z ${fmt(item.invoiceAmount, item.invoiceAmountCurrency)}` };
+      result = { score: 0.4, reason: `no open item number; same customer, possible partial payment ${fmt(payment.amount, payment.currency)} of ${fmt(item.invoiceAmount, item.invoiceAmountCurrency)}` };
     } else if (amountMatches) {
-      result = { score: 0.3, reason: 'zgadza się tylko kwota i waluta; numer pozycji i klient są inne' };
+      result = { score: 0.3, reason: 'only amount and currency agree; open item number and customer differ' };
     } else if (nameMatches) {
-      result = { score: 0.2, reason: 'zgadza się tylko klient; kwota i numer pozycji są inne' };
+      result = { score: 0.2, reason: 'only the customer agrees; amount and open item number differ' };
     }
     if (result) scores.set(item.openItemId, result);
   }
@@ -293,8 +293,9 @@ Score every candidate that the payment plausibly pays with a confidence between 
 Consider typos in the company name, partial payments, wrong currency, wrong or transposed open item ids, and one payment covering several open items (their amounts add up to the payment amount).
 
 Return ONLY a JSON object, no markdown, in this shape:
-{"matches":[{"openItemId":"<id from the list>","confidence":0.0,"reason":"<one sentence in Polish>"}],"rationale":"<2-3 sentences in Polish explaining the decision>"}
-Use "matches": [] when no candidate is plausibly paid.`;
+{"matches":[{"openItemId":"<id from the list>","confidence":0.0,"reason":"<one sentence in English>"}],"rationale":"<2-3 sentences in English explaining the decision>"}
+Use "matches": [] when no candidate is plausibly paid.
+Always write "reason" and "rationale" in English, even when the remittance advice or the email is in another language.`;
 }
 
 export interface AiMatch {
@@ -408,7 +409,7 @@ export function aggregateOpenItemAssessment(item: AssessableOpenItem, evidence: 
     return {
       aiConfidence: 0,
       aiMatchStatus: MATCH_STATUS.NO_MATCH,
-      aiRationale: 'Brak awizo płatności wskazującego na tę pozycję — według dostępnych maili pozycja nie została opłacona.',
+      aiRationale: 'No remittance advice points to this item — based on the received mails it has not been paid.',
       matchedPaymentCount: 0,
       matchedAmount: 0,
     };
@@ -428,9 +429,9 @@ export function aggregateOpenItemAssessment(item: AssessableOpenItem, evidence: 
     const allFull = contributors.every((e) => e.matchStatus === MATCH_STATUS.FULL && Number(e.matchScore) >= 1);
     confidence = allFull ? 1 : Math.max(Math.min(confidence, MAX_AI_SCORE), 0.97);
     status = allFull ? MATCH_STATUS.FULL : MATCH_STATUS.PROBABLE;
-    lines.push(`Pozycja opłacona w ${contributors.length} płatnościach, łącznie ${fmt(matchedAmount, item.invoiceAmountCurrency)}.`);
+    lines.push(`Item paid in ${contributors.length} payments, ${fmt(matchedAmount, item.invoiceAmountCurrency)} in total.`);
   } else if (sorted.length > 1) {
-    lines.push(`Inne płatności wskazujące na tę pozycję: ${sorted.slice(1).map((e) => `${e.payer} ${fmt(e.paymentAmount, e.currency)} (${Math.round(Number(e.matchScore) * 100)}%)`).join('; ')}.`);
+    lines.push(`Other payments pointing to this item: ${sorted.slice(1).map((e) => `${e.payer} ${fmt(e.paymentAmount, e.currency)} (${Math.round(Number(e.matchScore) * 100)}%)`).join('; ')}.`);
   }
 
   return {

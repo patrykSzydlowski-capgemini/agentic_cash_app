@@ -23,7 +23,7 @@ import type {
 } from './agents/open-item-assessment.js'
 import { fetchNewPdfMailboxMessages } from './connectors/mailbox-client.js'
 import { getOpenItems as getLiveOpenItems } from './s4/open-items-client.js'
-import { postClearing, type SapMessage, type ClearingResult } from './s4/clearing-client.js'
+import { postClearing, type SapMessage, type ClearingMatch, type ClearingResult } from './s4/clearing-client.js'
 import { activeModelName, calculateTokenCost, calculateCapacityUnits } from './genai/index.js'
 import type { TokenUsage } from './genai/index.js'
 import {
@@ -36,6 +36,7 @@ import {
     CLASSIFICATION_DECISION,
     INGESTION_PROCESSING_STATUS,
     OPEN_ITEM_CLEARING_STATUS,
+    OPEN_ITEM_SOURCE,
     MATCH_STATUS,
     PIPELINE_RUN_STATUS,
     PIPELINE_RUN_TRIGGER,
@@ -43,6 +44,7 @@ import {
 import type { PipelineRunTrigger } from './constants/index.js'
 import { ApplicationError } from './core/errors/ApplicationError.js'
 import { paymentsRepository } from './repository/index.js'
+import { localTestOpenItemRows, localTestOpenItemsEnabled } from './fixtures/local-test-open-items.js'
 
 // Below this extractionConfidence the Matching Agent is skipped entirely
 // rather than run on shaky data, and the payment goes straight to needsReview.
@@ -53,6 +55,28 @@ const { INSERT, UPDATE, SELECT } = cds.ql
 const LOG = cds.log('cash-service')
 type ProcessPaymentDocumentPayload = Parameters<typeof processPaymentDocument>[0]
 type IngestAgentMatchPayload = Parameters<typeof ingestAgentMatch>[0]
+
+/**
+ * Clearing router: local test items (source = LOCAL) are cleared locally with a
+ * simulated document and never reach S/4HANA; all other items go to postClearing.
+ * Results stay aligned by index with `matches`, like postClearing.
+ */
+async function clearOpenItems(matches: ClearingMatch[]): Promise<ClearingResult[]> {
+    const localIds = await paymentsRepository.findLocalOpenItemIds(matches.map(match => match.openItemId))
+    const remote = matches.filter(match => !localIds.has(match.openItemId))
+    const remoteResults = remote.length > 0 ? await postClearing(remote) : []
+    let next = 0
+    return matches.map(match => {
+        if (!localIds.has(match.openItemId)) return remoteResults[next++]
+        LOG.info(`🧪 [Local Clearing] Open item ${match.openItemId} is a local test item — cleared locally, nothing posted to S/4HANA.`)
+        return {
+            postingId: randomUUID(),
+            documentNumber: `LOCAL-${match.openItemId}`,
+            status: 'LOCAL',
+            sapMessages: [],
+        }
+    })
+}
 
 
 export default class CashSyncServiceImpl extends cds.ApplicationService {
@@ -172,19 +196,19 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                     matchStatus = 'MATCHED'
                     reviewStatus = 'APPROVED'
                     actionRequired = false
-                    reason = `Pełne dopasowanie: kwota płatności (${matchedAmount}) w 100% odpowiada pozycji SAP (${invoiceAmount}).`
+                    reason = `Full match: the payment amount (${matchedAmount}) equals the open item amount (${invoiceAmount}).`
                 } else if (matchedAmount < invoiceAmount) {
                     confidence = 0.50
                     matchStatus = 'NEEDS_REVIEW'
                     reviewStatus = 'PENDING'
                     actionRequired = true
-                    reason = `Płatność częściowa: kwota płatności (${matchedAmount}) jest mniejsza niż kwota pozycji SAP (${invoiceAmount}) — wymaga weryfikacji.`
+                    reason = `Partial payment: the payment amount (${matchedAmount}) is lower than the open item amount (${invoiceAmount}) — review required.`
                 } else {
                     confidence = 0.40
                     matchStatus = 'NEEDS_REVIEW'
                     reviewStatus = 'PENDING'
                     actionRequired = true
-                    reason = `Nadpłata: kwota płatności (${matchedAmount}) przekracza kwotę pozycji SAP (${invoiceAmount}) — wymaga weryfikacji.`
+                    reason = `Overpayment: the payment amount (${matchedAmount}) exceeds the open item amount (${invoiceAmount}) — review required.`
                 }
             }
 
@@ -215,7 +239,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                     match_status: MATCH_RESULT_STATUS.MATCHED,
                     action_required: false,
                     review_status: REVIEW_STATUS.APPROVED,
-                    review_reason: 'Ręcznie zatwierdzone przez operatora'
+                    review_reason: 'Manually approved by the operator'
                 })
                 .where({ match_id: matchId })
 
@@ -352,9 +376,17 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             }
         }
 
+        // Local-only test items (source = LOCAL); insert-if-missing, so their state survives restarts.
+        const seedLocalTestOpenItems = async () => {
+            if (!localTestOpenItemsEnabled()) return
+            const added = await paymentsRepository.insertMissingOpenItems(localTestOpenItemRows())
+            if (added > 0) LOG.info('[ERP Sync] Local test open items added (never posted to S/4HANA)', { added })
+        }
+
         // S/4 sync; returns the active (not dismissed) items used as the matching pool.
         const loadOpenItems = async (stats?: RunStats): Promise<AssessableOpenItem[]> => {
             const tStart = Date.now()
+            await seedLocalTestOpenItems()
             try {
                 const liveItems = await getLiveOpenItems()
                 const rows = liveItems.map(item => ({
@@ -369,6 +401,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                         : OPEN_ITEM_CLEARING_STATUS.OPEN,
                     PostingDate: item.postingDate,
                     DocumentDate: item.documentDate,
+                    source: OPEN_ITEM_SOURCE.S4,
                 }))
                 await paymentsRepository.upsertOpenItems(rows)
                 await paymentsRepository.deleteOpenItemsNotIn(rows.map(row => row.OpenItemId))
@@ -457,7 +490,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                         filename: attachment.filename,
                         bodyText: message.bodyText,
                         classificationDecision: CLASSIFICATION_DECISION.RELEVANT,
-                        classificationReason: 'Mail z załącznikiem PDF — przekazany do ekstrakcji.',
+                        classificationReason: 'Mail with a PDF attachment — handed over to extraction.',
                         processingStatus: INGESTION_PROCESSING_STATUS.RECEIVED,
                     }
                     await paymentsRepository.insertIngestionLog({ ...entry, attachmentContent: attachment.content })
@@ -515,8 +548,8 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                     extractionConfidence: confidence,
                     status,
                     rationale: usable
-                        ? 'Dane wyodrębnione z awizo — oczekuje na dopasowanie.'
-                        : `Niska pewność ekstrakcji (${Math.round(confidence * 100)}%) lub brak kwoty — dopasowanie pominięte, wymagana weryfikacja ręczna.`,
+                        ? 'Data extracted from the remittance advice — waiting for matching.'
+                        : `Low extraction confidence (${Math.round(confidence * 100)}%) or missing amount — matching skipped, manual review required.`,
                     promptTokens: hasUsage ? promptTokens : null,
                     completionTokens: hasUsage ? completionTokens : null,
                     totalTokens: hasUsage ? Number(payment.totalTokens ?? promptTokens + completionTokens) : null,
@@ -527,13 +560,13 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             } catch (err) {
                 status = PAYMENT_STATUS.FAILED
                 record = {
-                    payer: source.sender || 'Nieznany płatnik',
+                    payer: source.sender || 'Unknown payer',
                     amount: 0,
                     currency: 'EUR',
                     references: [],
                     extractionConfidence: 0,
                     status,
-                    rationale: `Ekstrakcja nie powiodła się: ${(err as Error).message}`,
+                    rationale: `Extraction failed: ${(err as Error).message}`,
                     aiModel: activeModelName(),
                 }
                 LOG.warn('[Agent 2: Extraction] Failed', { fileName: source.fileName, error: (err as Error).message })
@@ -627,16 +660,16 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                             return toCandidate(item, score, match.reason || ai!.rationale)
                         })
                         .filter(candidate => candidate.matchScore > 0)
-                    rationale = ai.rationale || `Ocena AI. Rozbieżności: ${problems}.`
+                    rationale = ai.rationale || `AI assessment. Discrepancies: ${problems}.`
                 } else {
                     const scores = heuristicFallbackScores(payment, pool)
                     candidates = [...scores.entries()]
                         .sort((a, b) => b[1].score - a[1].score)
                         .slice(0, 5)
                         .map(([id, score]) => toCandidate(byId.get(id)!, score.score, score.reason))
-                    rationale = `Ocena regułowa (bez AI). Rozbieżności: ${problems}.`
+                    rationale = `Rule-based assessment (AI unavailable). Discrepancies: ${problems}.`
                 }
-                if (candidates.length === 0) rationale = `Brak pasującej pozycji otwartej w S/4HANA. Rozbieżności: ${problems}.`
+                if (candidates.length === 0) rationale = `No matching open item found. Discrepancies: ${problems}.`
             }
 
             const bestScore = candidates.reduce((best, candidate) => Math.max(best, candidate.matchScore), 0)
@@ -789,7 +822,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                     stats.extractionFailed++
                     await paymentsRepository.updateIngestionLog(log.ID, {
                         processingStatus: INGESTION_PROCESSING_STATUS.FAILED,
-                        classificationReason: 'Pusty załącznik PDF.',
+                        classificationReason: 'Empty PDF attachment.',
                     })
                     return
                 }
@@ -972,7 +1005,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             LOG.info(`🏦 [Manual Post] Operator triggered S/4HANA posting for payment ${ID} (${payment.payer}, ${payment.amount} ${payment.currency})`)
 
             if (payment.status === PAYMENT_STATUS.POSTED || payment.status === PAYMENT_STATUS.CLEARED) {
-                return req.error(400, `Płatność dla ${payment.payer} została już wcześniej zaksięgowana w S/4HANA.`)
+                return req.error(400, `The payment from ${payment.payer} has already been posted.`)
             }
 
             const matches = await paymentsRepository.findMatchesByPaymentId(ID)
@@ -980,7 +1013,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
 
             if (validMatches.length === 0) {
                 LOG.warn(`[Manual Post] No valid open item associated with payment ${ID}.`)
-                return req.error(400, `Płatność (${payment.payer}) nie posiada powiązanej otwartej pozycji w SAP. Dopasuj pozycję przed zaksięgowaniem.`)
+                return req.error(400, `The payment from ${payment.payer} has no matched open item. Match an open item before posting.`)
             }
 
             const unpostedMatches = validMatches.filter((m: any) =>
@@ -1008,7 +1041,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
 
             let results: ClearingResult[]
             try {
-                results = await postClearing(clearingMatches)
+                results = await clearOpenItems(clearingMatches)
             } catch (networkErr: any) {
                 const s4Msg = networkErr?.response?.data?.error?.message || networkErr?.cause?.response?.data?.error?.message
                 const s4Code = networkErr?.response?.data?.error?.code || networkErr?.cause?.response?.data?.error?.code
@@ -1156,8 +1189,8 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             }
         })
 
-        // 5b. Review queue: approve triggers the S/4 clearing post (the ONLY
-        // place allowed to call postClearing); reject is a pure status flip.
+        // 5b. Review queue: approve triggers the S/4 clearing post via clearOpenItems
+        // (local test items are cleared locally); reject is a pure status flip.
         // Without S/4 enabled approve fails honestly with 503, no status change.
         const SAP_MESSAGE_FAILURE_SEVERITY = 3
 
@@ -1175,7 +1208,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             LOG.info(`🏦 [S/4 Clearing] Posting clearance document to S/4HANA for open item ${match.openItemId}...`)
             let result: ClearingResult
             try {
-                const results = await postClearing([{
+                const results = await clearOpenItems([{
                     openItemId: match.openItemId,
                     companyCode: match.companyCode,
                     amount: Number(match.amount),
@@ -1254,16 +1287,23 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
         // Open/Closed Items tabs: "Delete" hides the item (soft delete). S/4HANA stays the
         // source of truth, so a hard delete would be undone by the next UPSERT sync.
         // Enum values of a run are technical ('mailSync'); show their @title texts instead.
-        const runElements = cds.entities('poc.cashapp').PipelineRuns.elements as Record<string, any>
-        const enumTitle = (element: string, value: unknown) => {
-            const title = runElements[element]?.enum?.[String(value)]?.['@title'] as string | undefined
+        const enumTitleOf = (elements: Record<string, any>) => (element: string, value: unknown) => {
+            const title = elements[element]?.enum?.[String(value)]?.['@title'] as string | undefined
             const key = title && /^\{i18n>(.+)\}$/.exec(title)?.[1]
             return (key && cds.i18n.labels.at(key)) || (value as string | null)
         }
+        const rowsOf = (result: unknown) => (Array.isArray(result) ? result : result ? [result] : []) as Array<Record<string, unknown>>
+        const runTitle = enumTitleOf(cds.entities('poc.cashapp').PipelineRuns.elements as Record<string, any>)
         this.after('READ', 'PipelineRuns', (result: unknown) => {
-            for (const run of (Array.isArray(result) ? result : result ? [result] : []) as Array<Record<string, unknown>>) {
-                if ('trigger' in run) run.triggerText = enumTitle('trigger', run.trigger)
-                if ('status' in run) run.statusText = enumTitle('status', run.status)
+            for (const run of rowsOf(result)) {
+                if ('trigger' in run) run.triggerText = runTitle('trigger', run.trigger)
+                if ('status' in run) run.statusText = runTitle('status', run.status)
+            }
+        })
+        const openItemTitle = enumTitleOf(cds.entities('poc.cash').OpenItem.elements as Record<string, any>)
+        this.after('READ', 'OpenItem', (result: unknown) => {
+            for (const item of rowsOf(result)) {
+                if ('source' in item) item.sourceText = openItemTitle('source', item.source ?? OPEN_ITEM_SOURCE.S4)
             }
         })
 
@@ -1298,7 +1338,12 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
         // Startup: S/4 open-item sync + incremental agent run, in the background so
         // the server is ready immediately. AGENT_PIPELINE_ON_STARTUP=false disables it (tests).
         cds.on('served', () => {
-            if (process.env.AGENT_PIPELINE_ON_STARTUP === 'false') return
+            if (process.env.AGENT_PIPELINE_ON_STARTUP === 'false') {
+                // The pipeline seeds local test items itself; without it they still show up.
+                seedLocalTestOpenItems()
+                    .catch(err => LOG.warn('[Bootstrap] Local test open items not seeded', { error: (err as Error).message }))
+                return
+            }
             const run = startPipeline(false, PIPELINE_RUN_TRIGGER.STARTUP)
             run?.catch(err => LOG.warn('[Bootstrap] Startup pipeline failed', { error: (err as Error).message }))
         })

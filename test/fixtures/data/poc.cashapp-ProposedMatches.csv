@@ -1,2 +1,2 @@
 ID,payment_ID,openItemId,companyCode,customerAccount,amount,currency,matchStatus,reviewStatus,matchScore,rationale,postingId,documentNumber,postingError
-00000002-0000-0000-0000-000000000001,00000001-0000-0000-0000-000000000001,0123456789,1000,CUST-10,1000.00,EUR,full,posted,1.00,"Pełne dopasowanie: referencja, kwota, waluta i płatnik zgodne.",POST-0001,100000001,
+00000002-0000-0000-0000-000000000001,00000001-0000-0000-0000-000000000001,0123456789,1000,CUST-10,1000.00,EUR,full,posted,1.00,"Full match: reference, amount, currency and payer agree.",POST-0001,100000001,

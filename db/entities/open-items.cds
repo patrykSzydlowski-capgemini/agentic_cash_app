@@ -19,6 +19,13 @@ entity OpenItem {
       };
       PostingDate      : Date;
       DocumentDate     : Date;
+      // S4 = synced from S/4HANA; LOCAL = local-only test item (kept by the sync, cleared locally, never posted to S/4).
+      source           : String(10) enum {
+        @title: '{i18n>openItemSourceS4}'
+        S4;
+        @title: '{i18n>openItemSourceLocal}'
+        LOCAL;
+      } default 'S4';
       // Agent 3 assessment: how sure the AI is that this item is paid (0..1, 1 = deterministic match).
       // Written by the pipeline only; S/4 sync uses UPSERT (PATCH semantics) and keeps these values.
       aiConfidence        : Decimal(3, 2);

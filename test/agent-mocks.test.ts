@@ -285,6 +285,6 @@ test('searchMailboxContext handles queries with no matching messages gracefully'
 
   assert.equal(result.hasMatches, false);
   assert.equal(result.matchedMessages.length, 0);
-  assert.match(result.summary, /Brak|pominięta/);
+  assert.match(result.summary, /No related emails|skipped/);
 });
 

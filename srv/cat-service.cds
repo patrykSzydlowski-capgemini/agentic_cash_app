@@ -23,7 +23,9 @@ service CashSyncService {
             else 0
         end as ClearingCriticality : Integer,
         // Confidence as 0..100 for the progress bar (null -> 0, never "of 1").
-        cast(coalesce(aiConfidence, 0) * 100 as Integer) as aiConfidencePercent : Integer
+        cast(coalesce(aiConfidence, 0) * 100 as Integer) as aiConfidencePercent : Integer,
+        // Localized enum title of `source` (S/4HANA vs. local test item), filled by an after-READ handler.
+        virtual sourceText : String
     } where dismissed is null or dismissed = false;
 
     @cds.odata.expand: [ 'open_item' ]
