@@ -6,10 +6,13 @@ using { poc.cashapp.IngestionLog } from './ingestion-log';
 
 entity Payments : cuid, managed {
   payer      : String(140);
+  companyCode: String(4);
   amount     : Decimal(15, 2);
   currency   : String(3);
   valueDate  : Date;
   references : array of String;
+  fileName   : String(255);
+  attachmentContent : LargeBinary @Core.MediaType: 'application/pdf';
   // Agent 2's self-reported confidence (0.00-1.00), persisted as-is; policy
   // decisions (e.g. routing to review) belong to the service layer.
   extractionConfidence : Decimal(3, 2);
@@ -22,6 +25,8 @@ entity Payments : cuid, managed {
     needsReview;
     @title: '{i18n>statusCleared}'
     cleared;
+    @title: '{i18n>statusPosted}'
+    posted;
     @title: '{i18n>statusFailed}'
     failed;
   } default 'extracted';

@@ -12,8 +12,19 @@ entity IngestionLog : cuid {
     bankFeed;
   };
   messageId             : String(255);
+  sender                : String(255);
   subject               : String(255);
   filename              : String(255);
+  attachmentContent     : LargeBinary @Core.MediaType: 'application/pdf';
+  bodyText              : LargeString;
+  processingStatus      : String enum {
+    @title: '{i18n>processingStatusReceived}'
+    received;
+    @title: '{i18n>processingStatusExtracted}'
+    extracted;
+    @title: '{i18n>processingStatusFailed}'
+    failed;
+  } default 'received';
   classificationDecision : String enum {
     @title: '{i18n>decisionRelevant}'
     relevant;

@@ -55,6 +55,7 @@
     "ai:process": "node --import tsx scripts/process-payment.ts",
     "ai:cf:create": "node --import tsx scripts/configure-ai-cf.ts create",
     "ai:cf:update": "node --import tsx scripts/configure-ai-cf.ts update",
+    "mail:check": "cds bind --exec -- node --import tsx scripts/mail-read.ts",
     "mail:sync": "node --import tsx scripts/sync-mailbox.ts"
   },
   "cds": {
@@ -64,6 +65,7 @@
       }
     },
     "requires": {
+      "destinations": true,
       "db": {
         "kind": "sqlite"
       },
@@ -88,6 +90,11 @@
         },
         "model": "gemini-2.5-flash",
         "resourceGroup": "default"
+      },
+      "mail": {
+        "credentials": {
+          "destination": "mail-read"
+        }
       },
       "poc-cash-ai": {
         "kind": "user-provided",

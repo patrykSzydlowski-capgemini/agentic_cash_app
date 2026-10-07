@@ -2,6 +2,7 @@ namespace poc.cash;
 
 using { cuid, managed } from '@sap/cds/common';
 using { poc.cash.MatchResult } from './match-results';
+using { poc.cashapp.ProposedMatches } from './proposed-matches';
 
 entity OpenItem {
   key OpenItemId       : String(36);
@@ -10,8 +11,31 @@ entity OpenItem {
       CustomerName     : String(100);
       InvoiceAmount    : Decimal(15, 2);
       InvoiceAmountCurr: String(3);
-      ClearingStatus   : String(20);
+      ClearingStatus   : String(20) enum {
+        @title: '{i18n>clearingStatusOpen}'
+        OPEN;
+        @title: '{i18n>clearingStatusCleared}'
+        CLEARED;
+      };
       PostingDate      : Date;
       DocumentDate     : Date;
+      // Agent 3 assessment: how sure the AI is that this item is paid (0..1, 1 = deterministic match).
+      // Written by the pipeline only; S/4 sync uses UPSERT (PATCH semantics) and keeps these values.
+      aiConfidence        : Decimal(3, 2);
+      aiMatchStatus       : String enum {
+        @title: '{i18n>matchStatusFull}'
+        full;
+        @title: '{i18n>matchStatusProbable}'
+        probable;
+        @title: '{i18n>matchStatusToBeChecked}'
+        toBeChecked;
+        @title: '{i18n>matchStatusNoMatch}'
+        noMatch;
+      };
+      aiRationale         : LargeString;
+      matchedPaymentCount : Integer;
+      matchedAmount       : Decimal(15, 2);
+      assessedAt          : Timestamp;
       matches          : Association to many MatchResult on matches.open_item = $self;
+      proposedMatches  : Association to many ProposedMatches on proposedMatches.openItemId = OpenItemId;
 }
