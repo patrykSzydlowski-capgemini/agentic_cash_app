@@ -4,7 +4,7 @@ _out/
 gen/
 dist/
 app/*/dist/
-
+docs/*.mp4
 .cdsrc-private.json
 default-*.json
 .env
