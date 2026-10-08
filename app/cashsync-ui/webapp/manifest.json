@@ -275,6 +275,11 @@
                       "press": "poc.cash.cashsyncui.ext.UploadPayment.onUploadPayment",
                       "text": "{i18n>actionUploadPayment}",
                       "requiresSelection": false
+                    },
+                    "revalidatePipeline": {
+                      "press": "poc.cash.cashsyncui.ext.RevalidatePipeline.onRevalidatePipeline",
+                      "text": "{i18n>actionRevalidatePipeline}",
+                      "requiresSelection": false
                     }
                   }
                 },
@@ -293,7 +298,7 @@
                   },
                   "actions": {
                     "revalidatePipeline": {
-                      "press": "poc.cash.cashsyncui.ext.UploadPayment.onRevalidatePipeline",
+                      "press": "poc.cash.cashsyncui.ext.RevalidatePipeline.onRevalidatePipeline",
                       "text": "{i18n>actionRevalidatePipeline}",
                       "requiresSelection": false
                     }

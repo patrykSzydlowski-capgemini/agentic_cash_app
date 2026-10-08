@@ -534,79 +534,8 @@ sap.ui.define([
 		}
 	}
 
-	function onRevalidatePipeline(oContext, aSelectedContexts) {
-		var oModel = findModel(this, oContext, null);
-		if (!oModel) {
-			MessageBox.error(getText('uploadModelError', null, 'OData model not found — please reload the page.'));
-			return;
-		}
-
-		var that = this;
-		var oView = that && typeof that.getView === 'function' ? that.getView() : null;
-		if (oView && typeof oView.setBusy === 'function') {
-			oView.setBusy(true);
-		}
-
-		MessageToast.show(getText('msgRevalidatingPipeline', null, 'Revalidating pipeline with S/4HANA & AI Core...'));
-
-		var oActionContext = oModel.bindContext('/revalidatePipeline(...)', null, { $$groupId: '$direct' });
-		oActionContext.execute('$direct').then(function () {
-			if (oView && typeof oView.setBusy === 'function') {
-				oView.setBusy(false);
-			}
-			var oResult = oActionContext.getBoundContext && oActionContext.getBoundContext() ? oActionContext.getBoundContext().getObject() : null;
-			var sMessage = (oResult && (oResult.value !== undefined ? oResult.value : oResult)) || 'Pipeline revalidation completed.';
-			MessageToast.show(sMessage);
-
-			// 1. Refresh extensionAPI if available
-			if (_oExtensionAPI && typeof _oExtensionAPI.refresh === 'function') {
-				_oExtensionAPI.refresh();
-			}
-			if (that && typeof that.getExtensionAPI === 'function') {
-				var ext = that.getExtensionAPI();
-				if (ext && typeof ext.refresh === 'function') {
-					ext.refresh();
-				}
-			}
-
-			// 2. Refresh active table bindings
-			try {
-				if (ElementRegistry && typeof ElementRegistry.all === 'function') {
-					var aElements = ElementRegistry.all();
-					if (Array.isArray(aElements)) {
-						aElements.forEach(function (c) {
-							if (c && c.isA && (c.isA('sap.m.Table') || c.isA('sap.ui.mdc.Table') || c.isA('sap.fe.macros.table.TableAPI'))) {
-								var b = c.getBinding && c.getBinding('items');
-								if (b && typeof b.refresh === 'function') {
-									b.refresh();
-								}
-								if (typeof c.refresh === 'function') {
-									c.refresh();
-								}
-							}
-						});
-					}
-				}
-			} catch (e) {
-				console.warn('Table binding refresh error', e);
-			}
-
-			// 3. Refresh model directly
-			if (oModel && typeof oModel.refresh === 'function') {
-				oModel.refresh();
-			}
-		}).catch(function (oError) {
-			if (oView && typeof oView.setBusy === 'function') {
-				oView.setBusy(false);
-			}
-			var sMsg = (oError && oError.message) || 'Error during pipeline revalidation.';
-			MessageBox.error(sMsg);
-		});
-	}
-
 	return {
 		onUploadPayment: onUploadPayment,
-		onRevalidatePipeline: onRevalidatePipeline,
 		onOpenPdfInNewTab: onOpenPdfInNewTab,
 		onDownloadPdf: onDownloadPdf
 	};

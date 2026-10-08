@@ -1,5 +1,6 @@
 import cds from '@sap/cds'
 import type { Request } from '@sap/cds'
+import { AsyncResource } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import type { ingestAgentMatch, processPaymentDocument } from '../@cds-models/CashSyncService/index.js'
 import { extractPayment } from './agents/extraction-agent.js'
@@ -21,6 +22,8 @@ import type {
     OpenItemMatchEvidence,
     ScoredCandidate,
 } from './agents/open-item-assessment.js'
+import { PIPELINE_PHASE, PIPELINE_SCOPE, PipelineProgress, idleProgressSnapshot } from './agents/pipeline-progress.js'
+import type { WorkPhase } from './agents/pipeline-progress.js'
 import { fetchNewPdfMailboxMessages } from './connectors/mailbox-client.js'
 import { getOpenItems as getLiveOpenItems } from './s4/open-items-client.js'
 import { postClearing, type SapMessage, type ClearingMatch, type ClearingResult } from './s4/clearing-client.js'
@@ -55,6 +58,11 @@ const { INSERT, UPDATE, SELECT } = cds.ql
 const LOG = cds.log('cash-service')
 type ProcessPaymentDocumentPayload = Parameters<typeof processPaymentDocument>[0]
 type IngestAgentMatchPayload = Parameters<typeof ingestAgentMatch>[0]
+
+// Bound at module load, i.e. outside any request: a task started through it runs
+// without cds.context, so its queries autocommit like the startup run instead of
+// joining a request transaction that is committed long before the task ends.
+const runDetached = AsyncResource.bind(<T>(task: () => T): T => task())
 
 /**
  * Clearing router: local test items (source = LOCAL) are cleared locally with a
@@ -350,8 +358,8 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
         // Wraps one pipeline run: inserts a `running` row, stores the stats when done.
         // Known limitation: inside a request transaction a failing run is rolled back
         // together with its row (a separate tx would risk SQLite lock contention).
-        const trackPipelineRun = async <T>(trigger: PipelineRunTrigger, task: (stats: RunStats) => Promise<T>): Promise<T> => {
-            const ID = randomUUID()
+        // Background runs (startPipeline) have no request tx, so their row always survives.
+        const trackPipelineRun = async <T>(trigger: PipelineRunTrigger, task: (stats: RunStats) => Promise<T>, ID: string = randomUUID()): Promise<T> => {
             const startedAt = Date.now()
             const stats = newRunStats()
             await paymentsRepository.insertPipelineRun({
@@ -798,17 +806,70 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             review: number
         }
 
+        // What "Revalidate Items" was started for; both empty = everything.
+        interface RevalidationScope {
+            openItemIds: string[]
+            paymentIds: string[]
+        }
+
+        const MATCHABLE_PAYMENT_STATUSES: string[] = [PAYMENT_STATUS.EXTRACTED, PAYMENT_STATUS.MATCHED, PAYMENT_STATUS.NEEDS_REVIEW]
+
+        // Unreliable extractions stay in review; matching them would only produce noise.
+        const isUsableExtraction = (payment: Record<string, any>) =>
+            Number(payment.extractionConfidence ?? 0) >= LOW_CONFIDENCE_THRESHOLD && Number(payment.amount ?? 0) > 0
+
+        const summarize = (
+            openItems: number,
+            newLogs: Array<Record<string, unknown>>,
+            extracted: number,
+            failed: number,
+            outcomes: MatchingOutcome[],
+        ): PipelineSummary => ({
+            openItems,
+            newLogs,
+            extracted,
+            failed,
+            evaluated: outcomes.length,
+            matched: outcomes.filter(o => o.status === PAYMENT_STATUS.MATCHED).length,
+            review: outcomes.filter(o => o.status === PAYMENT_STATUS.NEEDS_REVIEW).length,
+        })
+
+        // Agent 3a for each payment, then Agent 3b (open-item assessment).
+        const matchAndAssess = async (
+            payments: Array<Record<string, any>>,
+            openItems: AssessableOpenItem[],
+            provider: ProviderModule,
+            stats: RunStats,
+            progress: PipelineProgress,
+            extractionMs: Map<string, number>,
+        ): Promise<MatchingOutcome[]> => {
+            const tMatching = Date.now()
+            progress.startPhase(PIPELINE_PHASE.MATCHING, payments.length)
+            const outcomes = await mapWithConcurrency(payments, AGENT_CONCURRENCY, async (payment) => {
+                const context = await emailContextForPayment(payment.ID)
+                const outcome = await runMatchingAgent(payment, openItems, provider, { ...context, baseProcessingMs: extractionMs.get(payment.ID), stats })
+                progress.advance()
+                return outcome
+            })
+            progress.startPhase(PIPELINE_PHASE.ASSESSMENT)
+            await assessOpenItems(stats)
+            stats.matchingMs = Date.now() - tMatching
+            return outcomes
+        }
+
         // full=false: new mails only (startup, syncMailbox, scheduler).
         // full=true:  also retries failed extractions and re-matches every unposted payment.
-        const runAgentPipeline = async ({ full }: { full: boolean }, stats: RunStats): Promise<PipelineSummary> => {
+        const runAgentPipeline = async ({ full }: { full: boolean }, stats: RunStats, progress: PipelineProgress): Promise<PipelineSummary> => {
             const tStart = Date.now()
             LOG.info('[Pipeline] Started', { mode: full ? 'full' : 'incremental', engine: providerMode() })
             const provider = await resolveProvider()
 
+            progress.startPhase(PIPELINE_PHASE.ERP_SYNC)
             const openItems = await loadOpenItems(stats)
 
             let newLogs: Array<Record<string, unknown>> = []
             const tMail = Date.now()
+            progress.startPhase(PIPELINE_PHASE.MAIL_INTAKE)
             try {
                 newLogs = await runMailIntakeAgent(stats)
             } catch (err) {
@@ -823,6 +884,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             const extractionMs = new Map<string, number>()
             let failed = 0
             const tExtraction = Date.now()
+            progress.startPhase(PIPELINE_PHASE.EXTRACTION, logs.length)
             await mapWithConcurrency(logs, AGENT_CONCURRENCY, async (log) => {
                 const pdf = await toBuffer(log.attachmentContent)
                 if (pdf.length === 0) {
@@ -832,6 +894,7 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                         processingStatus: INGESTION_PROCESSING_STATUS.FAILED,
                         classificationReason: 'Empty PDF attachment.',
                     })
+                    progress.advance()
                     return
                 }
                 const outcome = await runExtractionAgent(pdf, provider, {
@@ -848,42 +911,131 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
                         ? INGESTION_PROCESSING_STATUS.FAILED
                         : INGESTION_PROCESSING_STATUS.EXTRACTED,
                 })
+                progress.advance()
             })
             stats.extractionMs = Date.now() - tExtraction
 
-            const statuses: string[] = full
-                ? [PAYMENT_STATUS.EXTRACTED, PAYMENT_STATUS.MATCHED, PAYMENT_STATUS.NEEDS_REVIEW]
-                : [PAYMENT_STATUS.EXTRACTED]
+            const statuses: string[] = full ? MATCHABLE_PAYMENT_STATUSES : [PAYMENT_STATUS.EXTRACTED]
             const candidates = (await paymentsRepository.findAllPayments() as Array<Record<string, any>>)
-                .filter(p => statuses.includes(p.status))
-                // Unreliable extractions stay in review; matching them would only produce noise.
-                .filter(p => Number(p.extractionConfidence ?? 0) >= LOW_CONFIDENCE_THRESHOLD && Number(p.amount ?? 0) > 0)
-            const tMatching = Date.now()
-            const outcomes = await mapWithConcurrency(candidates, AGENT_CONCURRENCY, async (payment) => {
-                const context = await emailContextForPayment(payment.ID)
-                return runMatchingAgent(payment, openItems, provider, { ...context, baseProcessingMs: extractionMs.get(payment.ID), stats })
-            })
-            await assessOpenItems(stats)
-            stats.matchingMs = Date.now() - tMatching
+                .filter(p => statuses.includes(p.status) && isUsableExtraction(p))
+            const outcomes = await matchAndAssess(candidates, openItems, provider, stats, progress, extractionMs)
 
-            const summary: PipelineSummary = {
-                openItems: openItems.length,
-                newLogs,
-                extracted: logs.length - failed,
-                failed,
-                evaluated: outcomes.length,
-                matched: outcomes.filter(o => o.status === PAYMENT_STATUS.MATCHED).length,
-                review: outcomes.filter(o => o.status === PAYMENT_STATUS.NEEDS_REVIEW).length,
-            }
+            const summary = summarize(openItems.length, newLogs, logs.length - failed, failed, outcomes)
             LOG.info('[Pipeline] Completed', { mode: full ? 'full' : 'incremental', durationMs: Date.now() - tStart, ...summary, newLogs: newLogs.length })
             return summary
         }
 
+        // Selected payments, or the payments linked to the selected open items (a proposed
+        // match or an extracted reference naming the item). Posted payments are final.
+        const findPaymentsInScope = async (scope: RevalidationScope): Promise<Array<Record<string, any>>> => {
+            const payments = await paymentsRepository.findAllPayments() as Array<Record<string, any>>
+            const wanted = new Set(scope.paymentIds)
+            if (scope.openItemIds.length > 0) {
+                const itemIds = new Set(scope.openItemIds)
+                for (const match of await paymentsRepository.findAllProposedMatches() as Array<Record<string, any>>) {
+                    if (itemIds.has(String(match.openItemId))) wanted.add(String(match.payment_ID))
+                }
+                for (const payment of payments) {
+                    const references = parseReferences(payment.references)
+                    if (references.some(ref => scope.openItemIds.some(id => ref.includes(id)))) wanted.add(String(payment.ID))
+                }
+            }
+            return payments.filter(p => wanted.has(String(p.ID))
+                && p.status !== PAYMENT_STATUS.POSTED && p.status !== PAYMENT_STATUS.CLEARED)
+        }
+
+        // Agent 2 again on the stored PDF of a payment whose extraction failed or was unusable.
+        const reextractPayment = async (payment: Record<string, any>, provider: ProviderModule, stats: RunStats): Promise<ExtractionOutcome | null> => {
+            const paymentId = String(payment.ID)
+            const pdf = await toBuffer(await paymentsRepository.findPaymentPdf(paymentId))
+            if (pdf.length === 0) {
+                LOG.warn('[Agent 2: Extraction] No stored PDF, payment cannot be re-extracted', { paymentId })
+                stats.extractionFailed++
+                return null
+            }
+            const [log] = await paymentsRepository.findIngestionLogsByPaymentId(paymentId) as Array<Record<string, any>>
+            const outcome = await runExtractionAgent(pdf, provider, {
+                fileName: payment.fileName ?? log?.filename,
+                emailSubject: log?.subject,
+                sender: log?.sender,
+                existingPaymentId: paymentId,
+            }, stats)
+            if (log) {
+                await paymentsRepository.updateIngestionLog(log.ID, {
+                    processingStatus: outcome.status === PAYMENT_STATUS.FAILED
+                        ? INGESTION_PROCESSING_STATUS.FAILED
+                        : INGESTION_PROCESSING_STATUS.EXTRACTED,
+                })
+            }
+            return outcome
+        }
+
+        // Revalidation of a selection: S/4 resync, Agent 2 retry for failed / unusable
+        // extractions in scope, Agent 3 for the payments in scope. No mailbox step.
+        const runScopedRevalidation = async (scope: RevalidationScope, stats: RunStats, progress: PipelineProgress): Promise<PipelineSummary> => {
+            const tStart = Date.now()
+            LOG.info('[Pipeline] Scoped revalidation started', { openItemIds: scope.openItemIds, paymentIds: scope.paymentIds, engine: providerMode() })
+            const provider = await resolveProvider()
+
+            progress.startPhase(PIPELINE_PHASE.ERP_SYNC)
+            const openItems = await loadOpenItems(stats)
+
+            const inScope = await findPaymentsInScope(scope)
+            const toExtract = inScope.filter(p => p.status === PAYMENT_STATUS.FAILED
+                || (p.status === PAYMENT_STATUS.NEEDS_REVIEW && !isUsableExtraction(p)))
+            const extractionMs = new Map<string, number>()
+            let failed = 0
+            const tExtraction = Date.now()
+            progress.startPhase(PIPELINE_PHASE.EXTRACTION, toExtract.length)
+            await mapWithConcurrency(toExtract, AGENT_CONCURRENCY, async (payment) => {
+                const outcome = await reextractPayment(payment, provider, stats)
+                if (!outcome || outcome.status === PAYMENT_STATUS.FAILED) failed++
+                else extractionMs.set(outcome.paymentId, outcome.processingTimeMs)
+                progress.advance()
+            })
+            stats.extractionMs = Date.now() - tExtraction
+
+            // Re-read: the extraction above may have changed status and amount.
+            const ids = new Set(inScope.map(p => String(p.ID)))
+            const candidates = (await paymentsRepository.findAllPayments() as Array<Record<string, any>>)
+                .filter(p => ids.has(String(p.ID)) && MATCHABLE_PAYMENT_STATUSES.includes(p.status) && isUsableExtraction(p))
+            const outcomes = await matchAndAssess(candidates, openItems, provider, stats, progress, extractionMs)
+
+            const summary = summarize(openItems.length, [], toExtract.length - failed, failed, outcomes)
+            LOG.info('[Pipeline] Scoped revalidation completed', { durationMs: Date.now() - tStart, paymentsInScope: inScope.length, ...summary, newLogs: 0 })
+            return summary
+        }
+
+        const FULL_PHASES: WorkPhase[] = [PIPELINE_PHASE.ERP_SYNC, PIPELINE_PHASE.MAIL_INTAKE, PIPELINE_PHASE.EXTRACTION, PIPELINE_PHASE.MATCHING, PIPELINE_PHASE.ASSESSMENT]
+        const SCOPED_PHASES: WorkPhase[] = [PIPELINE_PHASE.ERP_SYNC, PIPELINE_PHASE.EXTRACTION, PIPELINE_PHASE.MATCHING, PIPELINE_PHASE.ASSESSMENT]
+
         // One pipeline run at a time across startup, scheduler and UI actions.
+        // `pipelineProgress` describes the running run, or the last one after it ended.
         let activePipeline: Promise<PipelineSummary> | null = null
-        const startPipeline = (full: boolean, trigger: PipelineRunTrigger): Promise<PipelineSummary> | null => {
+        let pipelineProgress: PipelineProgress | null = null
+        const startPipeline = (full: boolean, trigger: PipelineRunTrigger, scope?: RevalidationScope): Promise<PipelineSummary> | null => {
             if (activePipeline) return null
-            activePipeline = trackPipelineRun(trigger, stats => runAgentPipeline({ full }, stats))
+            const scoped = scope !== undefined && (scope.openItemIds.length > 0 || scope.paymentIds.length > 0)
+            const runId = randomUUID()
+            const progress = new PipelineProgress(
+                runId,
+                trigger,
+                scoped ? SCOPED_PHASES : FULL_PHASES,
+                !scoped ? PIPELINE_SCOPE.ALL : scope.openItemIds.length > 0 ? PIPELINE_SCOPE.OPEN_ITEMS : PIPELINE_SCOPE.PAYMENTS,
+                scoped ? scope.openItemIds.length + scope.paymentIds.length : 0,
+            )
+            pipelineProgress = progress
+            activePipeline = trackPipelineRun(trigger, stats => scoped
+                ? runScopedRevalidation(scope, stats, progress)
+                : runAgentPipeline({ full }, stats, progress), runId)
+                .then(summary => {
+                    const { openItems, extracted, failed, evaluated, matched, review } = summary
+                    progress.complete({ openItems, extracted, failed, evaluated, matched, review })
+                    return summary
+                }, err => {
+                    progress.fail((err as Error).message)
+                    throw err
+                })
                 .finally(() => { activePipeline = null })
             return activePipeline
         }
@@ -960,19 +1112,25 @@ Return ONLY a single valid JSON object (no markdown, no quotes):
             }
         })
 
-        // Full run: S/4 resync, retry failed extractions, re-match every unposted payment.
-        this.on('revalidatePipeline', async (req: Request) => {
-            const run = startPipeline(true, PIPELINE_RUN_TRIGGER.REVALIDATION)
+        // "Revalidate Items". No selection: full run (S/4 resync, new mails, retry failed
+        // extractions, re-match every unposted payment). With openItemIds / paymentIds: only
+        // the selected payments, or the payments linked to the selected open items.
+        // A run takes minutes (S/4 + AI) and would hit the approuter / gorouter timeout (502),
+        // so the action only starts it in the background and returns its progress;
+        // the UI polls getPipelineProgress until the run has finished.
+        this.on('revalidatePipeline', (req: Request) => {
+            const { openItemIds, paymentIds } = req.data as { openItemIds?: string[] | null; paymentIds?: string[] | null }
+            const distinct = (ids?: string[] | null) => [...new Set((ids ?? []).map(String).filter(Boolean))]
+            const scope = { openItemIds: distinct(openItemIds), paymentIds: distinct(paymentIds) }
+            const run = runDetached(() => startPipeline(true, PIPELINE_RUN_TRIGGER.REVALIDATION, scope))
             if (!run) return req.reject(409, 'PIPELINE_BUSY')
-            try {
-                const summary = await run
-                req.notify('REVALIDATE_PIPELINE_SUCCESS', undefined, [String(summary.evaluated), String(summary.openItems), String(summary.matched), String(summary.review)])
-                return `Pipeline revalidated: ${summary.evaluated} payment(s) evaluated against ${summary.openItems} ERP open item(s) (${summary.matched} auto-matched, ${summary.review} pending review).`
-            } catch (err) {
-                LOG.error('[Pipeline] Revalidation failed', { error: (err as Error).message })
-                return req.reject(500, `Pipeline revalidation failed: ${(err as Error).message}`)
-            }
+            run.catch(err => LOG.error('[Pipeline] Revalidation failed', { error: (err as Error).message }))
+            LOG.info('[Pipeline] Revalidation started in the background', { runId: pipelineProgress?.runId, ...scope })
+            return pipelineProgress!.snapshot()
         })
+
+        // Polled by the revalidation dialog: the running run, or the last one after it ended.
+        this.on('getPipelineProgress', () => pipelineProgress?.snapshot() ?? idleProgressSnapshot())
 
         // Operator action: Agent 3 for one payment, then open-item re-assessment.
         this.on('reprocessWithAI', 'Payments', async (req: Request) => {

@@ -295,12 +295,76 @@ test('postToS4 on multi-invoice payment attempts clearing (test destination unre
     assert.ok([200, 400, 502].includes(response.status), String(response.status));
 });
 
-test('revalidatePipeline executes 3-agent pipeline and returns summary', async () => {
+// revalidatePipeline only starts the run; poll its progress until it has finished.
+async function waitForPipeline(runId: string) {
+    for (let attempt = 0; attempt < 300; attempt++) {
+        const progress = await get('/getPipelineProgress()');
+        if (progress.runId === runId && progress.status !== 'running') return progress;
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error(`Pipeline run ${runId} did not finish`);
+}
+
+test('revalidatePipeline starts the full 3-agent pipeline in the background and reports progress', async () => {
+    assert.equal((await get('/getPipelineProgress()')).status, 'idle', 'no pipeline run yet');
     const response = await post('/revalidatePipeline', {});
     assert.equal(response.status, 200);
-    const result = await response.json();
-    assert.ok(typeof result.value === 'string');
-    assert.match(result.value, /Pipeline revalidated/);
+    const started = await response.json();
+    assert.ok(started.runId, 'the run id is returned at once');
+    assert.equal(started.scope, 'all');
+    assert.equal(started.selectedCount, 0);
+    assert.equal(started.phaseCount, 5, 'S/4 sync, mail intake, extraction, matching, assessment');
+
+    const done = await waitForPipeline(started.runId);
+    assert.equal(done.status, 'completed', done.message ?? '');
+    assert.equal(done.phase, 'done');
+    assert.equal(done.percent, 100);
+    assert.ok(done.finishedAt, 'finishedAt should be set');
+    assert.ok(done.evaluated > 0, 'Agent 3 evaluated payments');
+    assert.ok(done.openItems >= 5, 'open items considered by the run');
+
+    const run = await get(`/PipelineRuns(${started.runId})`);
+    assert.equal(run.trigger, 'revalidation');
+    assert.equal(run.status, 'completed', 'the background run row is stored with the same id');
+    assert.equal(run.paymentsEvaluated, done.evaluated);
+});
+
+test('revalidatePipeline with selected payments re-matches only those and retries unusable extractions', async () => {
+    const usable = '00000001-0000-0000-0000-000000000002';   // extracted, ref OP-1001
+    const unusable = '00000001-0000-0000-0000-000000000003'; // needsReview, confidence 0.30, no stored PDF
+    const started = await (await post('/revalidatePipeline', { paymentIds: [usable, unusable] })).json();
+    assert.equal(started.scope, 'payments');
+    assert.equal(started.selectedCount, 2);
+    assert.equal(started.phaseCount, 4, 'no mailbox step for a selection');
+
+    const done = await waitForPipeline(started.runId);
+    assert.equal(done.status, 'completed', done.message ?? '');
+    assert.equal(done.evaluated, 1, 'only the selected usable payment is matched');
+    assert.equal(done.failed, 1, 'the unusable payment has no PDF to re-extract');
+    const run = await get(`/PipelineRuns(${started.runId})`);
+    assert.equal(run.paymentsEvaluated, 1);
+    assert.equal(run.newMails, 0, 'the mailbox is not scanned for a selection');
+});
+
+test('revalidatePipeline with selected open items re-matches the payments linked to them', async () => {
+    const started = await (await post('/revalidatePipeline', { openItemIds: ['OP-1003'] })).json();
+    assert.equal(started.scope, 'openItems');
+    assert.equal(started.selectedCount, 1);
+    const done = await waitForPipeline(started.runId);
+    assert.equal(done.status, 'completed', done.message ?? '');
+    const allPayments = (await get('/Payments')).value
+        .filter((p: any) => !['posted', 'cleared'].includes(p.status));
+    assert.ok(done.evaluated >= 1, 'MultiTech Corp names OP-1003 in its references');
+    assert.ok(done.evaluated < allPayments.length, 'unrelated payments are not re-matched');
+    const [item] = (await get(`/OpenItem?$filter=OpenItemId eq 'OP-1003'`)).value;
+    assert.ok(item.assessedAt, 'the selected open item is re-assessed');
+});
+
+test('revalidatePipeline with an unknown selection completes without evaluating anything', async () => {
+    const started = await (await post('/revalidatePipeline', { openItemIds: ['DOES-NOT-EXIST'] })).json();
+    const done = await waitForPipeline(started.runId);
+    assert.equal(done.status, 'completed', done.message ?? '');
+    assert.equal(done.evaluated, 0);
 });
 
 test('getAiStatistics aggregates finished pipeline runs: tokens, cost, CU, durations, volumes', async () => {
@@ -341,7 +405,10 @@ test('reprocessWithAI keeps token metrics, estimated cost, and CU on payment', a
 
 test('PipelineRuns: every run is recorded with trigger, status, duration, AI usage and volumes', async () => {
     const runs = (await get('/PipelineRuns?$orderby=startedAt desc')).value;
-    const revalidation = runs.find((run: any) => run.trigger === 'revalidation');
+    // The full revalidation run (the scoped runs started later evaluate fewer payments).
+    const revalidation = runs
+        .filter((run: any) => run.trigger === 'revalidation')
+        .sort((a: any, b: any) => b.paymentsEvaluated - a.paymentsEvaluated)[0];
     assert.ok(revalidation, 'revalidatePipeline must create a run row');
     assert.equal(revalidation.status, 'completed');
     assert.equal(revalidation.statusText, 'Completed', 'enum value is shown with its localized title');
