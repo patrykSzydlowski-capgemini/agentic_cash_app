@@ -197,18 +197,38 @@ service CashSyncService {
     }
     action syncMailbox() returns array of IngestionLog;
 
-    // Full pipeline run: sync S/4 OpenItems -> Agent 1 -> Agent 2 (incl. failed mails) -> Agent 3 for all unposted payments
-    @Common.SideEffects: {
-        TargetEntities: [
-            Payments,
-            ProposedMatches,
-            IngestionLog,
-            OpenItem,
-            MatchResult,
-            PipelineRuns
-        ]
-    }
-    action revalidatePipeline() returns String;
+    // Live progress of the running (or last finished) pipeline run.
+    type PipelineProgress {
+        runId         : UUID;
+        trigger       : String(20);
+        scope         : String(20);  // all | openItems | payments
+        selectedCount : Integer;
+        status        : String(20);  // idle | running | completed | failed
+        phase         : String(20);  // erpSync | mailIntake | extraction | matching | assessment | done
+        phaseIndex    : Integer;
+        phaseCount    : Integer;
+        processed     : Integer;
+        total         : Integer;
+        percent       : Integer;
+        startedAt     : Timestamp;
+        finishedAt    : Timestamp;
+        message       : String;
+        openItems     : Integer;
+        extracted     : Integer;
+        failed        : Integer;
+        evaluated     : Integer;
+        matched       : Integer;
+        review        : Integer;
+    };
+
+    // "Revalidate Items": starts the pipeline in the background and returns its progress at once
+    // (a synchronous run outlives the approuter timeout -> 502); the UI polls getPipelineProgress
+    // and refreshes the tables when the run has finished.
+    // No ids: full run (S/4 OpenItems -> Agent 1 -> Agent 2 incl. failed mails -> Agent 3 for all unposted payments).
+    // openItemIds: only payments linked to these open items; paymentIds: only these payments.
+    action revalidatePipeline(openItemIds : many String, paymentIds : many UUID) returns PipelineProgress;
+
+    function getPipelineProgress() returns PipelineProgress;
 
     action ingestAgentMatch(
         match_id: String,

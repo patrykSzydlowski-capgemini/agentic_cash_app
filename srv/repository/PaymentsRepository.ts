@@ -48,6 +48,14 @@ export class PaymentsRepository {
         return query
     }
 
+    /** Stored PDF of a payment: its own attachment, else the one of the mail it came from. */
+    async findPaymentPdf(paymentId: string): Promise<unknown> {
+        const payment = await SELECT.one.from(this.payments).columns('attachmentContent').where({ ID: paymentId })
+        if (payment?.attachmentContent) return payment.attachmentContent
+        const log = await SELECT.one.from(this.ingestionLog).columns('attachmentContent').where({ payment_ID: paymentId })
+        return log?.attachmentContent ?? null
+    }
+
     async insertPayment(payment: Record<string, unknown>) {
         return INSERT.into(this.payments).entries(payment)
     }

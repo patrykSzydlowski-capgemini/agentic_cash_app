@@ -1,0 +1,60 @@
+<core:FragmentDefinition
+    xmlns="sap.m"
+    xmlns:core="sap.ui.core">
+    <!-- Live progress of the background pipeline run started by "Revalidate Items"
+         (polled from getPipelineProgress by RevalidatePipeline.js). -->
+    <Dialog
+        id="revalidateProgressDialog"
+        title="{i18n>revalidateDialogTitle}"
+        contentWidth="32rem"
+        draggable="true"
+        afterClose=".onAfterClose">
+        <content>
+            <VBox class="sapUiSmallMargin">
+                <MessageStrip
+                    text="{progress>/noticeText}"
+                    type="Information"
+                    showIcon="true"
+                    visible="{= !!${progress>/noticeText} }"
+                    class="sapUiSmallMarginBottom"/>
+                <Text text="{progress>/scopeText}" class="sapUiSmallMarginBottom"/>
+                <HBox alignItems="Center">
+                    <BusyIndicator size="1rem" visible="{progress>/running}" class="sapUiTinyMarginEnd"/>
+                    <Label text="{progress>/stepText}" design="Bold" wrapping="true"/>
+                </HBox>
+                <ProgressIndicator
+                    percentValue="{progress>/percent}"
+                    displayValue="{progress>/percentText}"
+                    state="{progress>/state}"
+                    showValue="true"
+                    width="100%"
+                    class="sapUiSmallMarginTopBottom"/>
+                <Text text="{progress>/processedText}" visible="{= !!${progress>/processedText} }"/>
+                <Text text="{progress>/elapsedText}"/>
+                <MessageStrip
+                    text="{progress>/connectionText}"
+                    type="Warning"
+                    showIcon="true"
+                    visible="{= !!${progress>/connectionText} }"
+                    class="sapUiSmallMarginTop"/>
+                <MessageStrip
+                    text="{progress>/resultText}"
+                    type="{progress>/resultType}"
+                    showIcon="true"
+                    visible="{= !!${progress>/resultText} }"
+                    class="sapUiSmallMarginTop"/>
+            </VBox>
+        </content>
+        <buttons>
+            <Button
+                text="{i18n>revalidateRunInBackground}"
+                visible="{progress>/running}"
+                press=".onRunInBackground"/>
+            <Button
+                text="{i18n>revalidateClose}"
+                type="Emphasized"
+                visible="{= !${progress>/running} }"
+                press=".onCloseDialog"/>
+        </buttons>
+    </Dialog>
+</core:FragmentDefinition>
